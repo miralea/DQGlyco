@@ -36,8 +36,6 @@ All further analyses start from the processed files saved to **data/processed**.
 - [*analysis/data_analysis/06_quantitativeprofiling_microbiomegroups.Rmd*](analysis/data_analysis/06_quantitativeprofiling_microbiomegroups.Rmd) contains code for the analysis of the quantitative glycoproteomics and proteomics data used in this study. For this, Homo sapiens glycosyltransferases data from uniprot has to provided (in data/uniprot).
 
 
-test
-
 
 
 
