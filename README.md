@@ -17,23 +17,28 @@ The analysis scripts can be found in analysis, which further is divided in struc
 
 ### Data analysis
 
-The data analysis starts with psm/protein files which are the output of an MSFragger search (https://msfragger.nesvilab.org0) and can be retrieved from the **PRIDE repository** of the study (link). In total 9 MSFragger outputfiles are used in this study.
+The data analysis starts with psm/protein files which are the output of an MSFragger search (https://msfragger.nesvilab.org0) and can be retrieved from the **PRIDE repository** of the study (link). In total 9 MSFragger outputfiles are used in this study saved to **data/psm_files**.
 
-**In *analysis/data_analysis/01_data_processing.Rmd*, these psm files are processed and saved in a standardized way** 
+**In [*analysis/data_analysis/01_data_processing.Rmd*](analysis/data_analysis/01_data_processing.Rmd), these psm files are processed and saved in a standardised way ins data/processed.** 
 
 ---
 
-All further analyses start from files saved to data/processed
+All further analyses start from the processed files saved to **data/processed**.
 
-- *analysis/data_analysis/02_enrichment_analyses.Rmd* contains code for all enrichment analyses performed in this study.
+- [*analysis/data_analysis/02_enrichment_analyses.Rmd*](analysis/data_analysis/02_enrichment_analyses.Rmd) contains code for all enrichment analyses performed in this study.
 
-- *analysis/data_analysis/03_comparison_to_other_datasets.Rmd* contains code for all comparisons to other studies performed in this study. To run this code, tables from other studies have to be downloaded as indicated in the script. For this, Mus musculus glycosylation data from uniprot has to provided (in data/uniprot).
+- [*analysis/data_analysis/03_comparison_to_other_datasets.Rmd*](analysis/data_analysis/03_comparison_to_other_datasets.Rmd) contains code for all comparisons to other studies performed in this study. To run this code, tables from other studies have to be downloaded as indicated in the script. For this, Mus musculus glycosylation data from uniprot has to provided (in data/uniprot).
 
-- *analysis/data_analysis/04_sitecorrelation.Rmd* contains code for all site-centric analyses performed in this study (correlation of glycosylation profiles, comparison to phosphorylation data). For this, Mus musculus phosphorylation data from uniprot has to provided (in data/uniprot).
+- [*analysis/data_analysis/04_sitecorrelation.Rmd*](analysis/data_analysis/04_sitecorrelation.Rmd) contains code for all site-centric analyses performed in this study (correlation of glycosylation profiles, comparison to phosphorylation data). For this, Mus musculus phosphorylation data from uniprot has to provided (in data/uniprot).
 
-- *analysis/data_analysis/05_motif_analysis.Rmd* contains code for all motif analyses performed in this study. For this a Mus musculus fasta file has to be provided
+- [*analysis/data_analysis/05_motif_analysis.Rmd*](analysis/data_analysis/05_motif_analysis.Rmd) contains code for all motif analyses performed in this study. For this a Mus musculus fasta file has to be provided
 
-- *analysis/data_analysis/06_quantitativeprofiling_microbiomegroups.Rmd* contains code for the analysis of the quantitative glycoproteomics and proteomics data used in this study. For this, Homo sapiens glycosyltransferases data from uniprot has to provided (in data/uniprot).
+- [*analysis/data_analysis/06_quantitativeprofiling_microbiomegroups.Rmd*](analysis/data_analysis/06_quantitativeprofiling_microbiomegroups.Rmd) contains code for the analysis of the quantitative glycoproteomics and proteomics data used in this study. For this, Homo sapiens glycosyltransferases data from uniprot has to provided (in data/uniprot).
+
+
+test
+
+
 
 
 
