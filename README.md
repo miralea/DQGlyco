@@ -37,7 +37,7 @@ All further analyses start from the processed files saved to **data/processed**.
 
 ### Figures and Tables
 
-In [*analysis/data_analysis/figures_tables_supplements*](analysis/data_analysid/figures_tables_supplements) code used to generate all figures, tables and supplementary data is deposited. Everything starts from the processed results in **data/processed**.
+In [*analysis/data_analysis/figures_tables_supplements*](analysis/data_analysis/figures_tables_supplements) code used to generate all figures, tables and supplementary data is deposited. Everything starts from the processed results in **data/processed**.
 
 
 
