@@ -52,7 +52,7 @@ options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgre
 
 
 ```{r}
-# load("data/paper/top_runs/230227_HEK_HeLa_glyco_3best_runs_largedatabase_psm_processed.RData")
+# load("data/top_runs/230227_HEK_HeLa_glyco_3best_runs_largedatabase_psm_processed.RData")
 ```
 
 # A
@@ -65,8 +65,8 @@ Combine single shot data
 
 
 ```{r}
-load("data/paper/top_runs/230320_Hela_lf_scanranges_3rep_psm_processed.RData")
-load("data/paper/top_runs/230310_Mouse_brain_lf_singleshot_psm_processed.RData")
+load("data/processed/2023-05-16_Hela_lf_scanranges_3rep_psm_processed.RData")
+load("data/processed/2023-05-16_Mouse_brain_lf_singleshot_psm_processed.RData")
 psm_singleshot_combined <- res_singleshot$psm %>% 
   bind_rows(res_scanranges$psm %>%  filter(scan_range == "700-2000")) %>% 
   mutate(replicate = ifelse(is.na(replicate), data, replicate))
@@ -105,7 +105,9 @@ psm_singleshot_combined %>%
 # C
 
 ```{r}
-load("data/paper/top_runs/230213_allspecies_psm_processed.RData")
+#load("data/top_runs/230213_allspecies_psm_processed.RData")
+load("data/processed/2023-05-16_humancelllines_lf_3best_psm_processed.RData")
+load("data/processed/2023-05-16_mousebrain_fractionated_Nglyco_psm_processed.RData")
 ```
 
 
@@ -139,7 +141,8 @@ res_species$psm_total %>%
 # D
 
 ```{r}
-load("data/paper/top_runs/230213_allspecies_psm_processed.RData")
+load("data/processed/2023-05-16_humancelllines_lf_3best_psm_processed.RData")
+load("data/processed/2023-05-16_mousebrain_fractionated_Nglyco_psm_processed.RData")
 ```
 
 ```{r}
@@ -170,7 +173,7 @@ res_species$psm %>%
 ```
 
 ```{r}
-load("data/paper/top_runs/230223_Mouse_brain_lf_Oglyco_psm_processed.RData")
+load("data/processed/2023-05-16_mousebrain_fractionated_Oglyco_psm_processed.RData")
 ```
 
 ```{r}
@@ -190,8 +193,8 @@ res_Oglyco$summary %>%
 # E
 
 ```{r}
-load("data/paper/top_runs/230213_allspecies_psm_processed.RData")
-load("data/paper/comparison_to_datasets/uniprot_annotation_comparison.RData")
+load("data/processed/2023-05-16_mousebrain_fractionated_Nglyco_psm_processed.RData")
+load("data/comparison_to_datasets/uniprot_annotation_comparison.RData")
 ```
 
 ```{r}
@@ -210,7 +213,7 @@ ggplot(uniprot_anno_comparison %>%
 # F
 
 ```{r}
-load("data/paper/enrichments/2023-03-29_ER_string_NvsO.RData")
+load("data/enrichments/2023-05-16_ER_string_NvsO.RData")
 ```
 
 ```{r}
@@ -230,7 +233,7 @@ ER_NvsO_string %>%
 # G
 
 ```{r}
-load("results/20230323_massrange_compariosn.RData")
+load("data/comparison_to_datsets/2023-05-16_massrange_comparison.RData")
 ```
 
 ```{r}

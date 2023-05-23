@@ -4,6 +4,7 @@
 
 ![Repository summarising all analysis related to the DQGlyco paper.](DQGlyco_logopng.png)
 
+
 ## Background
 
 Protein glycosylation is a highly diverse post-translational modification, modulating key cellular processes such as cell signaling, adhesion and cell-cell interactions. Its deregulation has been associated with various pathologies, including cancer and neurological diseases. Methods capable of quantifying glycosylation dynamics are essential to start unraveling the  biological functions of protein glycosylation. Here we present, Deep Quantitative Glycoprofiling method, (DQGlyco), that combines high-throughput sample preparation, high-sensitivity detection, and precise multiplexed quantification of protein glycosylation. We used  DQGlyco to profile the mouse brain glycoproteome, in which we identify 158,972 and 15,056 unique N- and O-glycopeptides localized on 3,199 and 2,365 glycoproteins, respectively, constituting a 25-fold improvement at the glycopeptide level when compared to previous studies.  We observed extensive heterogeneity of glycoforms and determined their functional and structural preferences. The presence of a defined gut microbiota resulted in extensive remodeling of the brain glycoproteome when compared to that of germ-free animals, exemplifying how the gut microbiome may affect brain protein functions.
