@@ -32,7 +32,7 @@ All further analyses start from the processed files saved to **data/processed**.
 
 - [*analysis/data_analysis/04_sitecorrelation.Rmd*](analysis/data_analysis/04_sitecorrelation.Rmd) contains code for all site-centric analyses performed in this study (correlation of glycosylation profiles, comparison to phosphorylation data). For this, Mus musculus phosphorylation data from uniprot has to be provided (in data/uniprot).
 
-- [*analysis/data_analysis/05_motif_analysis.Rmd*](analysis/data_analysis/05_motif_analysis.Rmd) contains code for all motif analyses performed in this study. For this a Mus musculus fasta file has to be provided
+- [*analysis/data_analysis/05_motif_analysis.Rmd*](analysis/data_analysis/05_motif_analysis.Rmd) contains code for all motif analyses performed in this study. For this a Mus musculus fasta file has to be provided.
 
 - [*analysis/data_analysis/06_quantitativeprofiling_microbiomegroups.Rmd*](analysis/data_analysis/06_quantitativeprofiling_microbiomegroups.Rmd) contains code for the analysis of the quantitative glycoproteomics and proteomics data used in this study. For this, Homo sapiens glycosyltransferases data from uniprot has to be provided (in data/uniprot).
 
