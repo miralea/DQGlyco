@@ -10,6 +10,8 @@ editor_options:
   chunk_output_type: inline
 ---
 
+To extract motifs we first collapsed the N-X-S/T sequons to only N, as this combination of amino acids is fixed in the MSFragger search and will be present on all glycopeptides. Accordingly, we also collapsed all of these sequons in the Fasta database used as background. We defined a sequence window of +/- 9 amino acids around the central N for the foreground and background sequences. To perform the motif search we used the motif-x algorithm implemented in the rmotifx R package, which builds successive motifs through comparison to a dynamic statistical background62. We performed the motif search using an occurrence threshold of 5% and a p-value cutoff of 0.001%. For the motif search with a degenerated amino acid code, we further collapsed amino acids in the foreground and background sequences according to the following scheme: (i) H (hydrophilic) = STN, (ii) B (basic) = KRH, (iii) A (acidic) = DE, (iv) NP (light non polar) = GAV, (v) BH (bulky hydrophobic) = LIM, (vi) AR (aromatic) = YFW. The search was performed using the same parameters as before and with an increased p-value cutoff of 0.01%.
+
 # General settings
 
 ```{r setup}
