@@ -13,7 +13,7 @@ Protein glycosylation is a highly diverse post-translational modification, modul
 
 ## Repository structure
 
-The analysis scripts can be found in analysis, which further is divided in structural analysis and data analysis.
+The analysis scripts can be found in analysis, which further is divided in structural analysis and data analysis. By using the provided structure in [*data/*](data/) and following the instructions below, all analyses can be repeated.
 
 
 ### Data analysis
