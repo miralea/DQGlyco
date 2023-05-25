@@ -3,4 +3,15 @@
 .RData
 .Ruserdata
 analysis/.DS_Store
-data/.
+DQGlyco.Rproj
+.DS_Store
+README.html
+data/comparison_to_datasets/*
+data/uniprot/*
+data/supplementary_data/*
+data/site_level_results/*
+data/psm_files/*
+data/processed/*
+data/motifs/*
+data/microbiome/*
+data/enrichments/*
