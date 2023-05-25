@@ -20,7 +20,7 @@ The analysis scripts can be found in analysis, which further is divided in struc
 
 The data analysis starts with psm/protein files which are the output of an MSFragger search (https://msfragger.nesvilab.org0) and can be retrieved from the **PRIDE repository** of the study (PXD042237 (Username: reviewer_pxd042237@ebi.ac.uk,  Password: yuVC5zjW)). In total 9 MSFragger outputfiles are used in this study saved to **data/psm_files**.
 
-**In [*analysis/data_analysis/01_data_processing.Rmd*](analysis/data_analysis/01_data_processing.Rmd), these psm files are processed and saved in a standardised way ins data/processed.** 
+**In [*analysis/data_analysis/01_data_processing.Rmd*](analysis/data_analysis/01_data_processing.Rmd), these psm files are processed and saved in a standardised way in data/processed.** 
 
 ---
 
