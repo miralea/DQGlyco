@@ -25,7 +25,7 @@ knitr::opts_chunk$set(
   fig.height = 4,
   dpi = 700
 )
-knitr::opts_knit$set(root.dir = "~/Documents/Glycoproteomics/")
+knitr::opts_knit$set(root.dir = "/Users/burtsche/Documents/DQGlyco")
 ```
 
 
