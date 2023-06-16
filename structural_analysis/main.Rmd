@@ -1,4 +1,23 @@
+---
+title: "Structural analysis of DQGlyco"
+output: html_document
+---
+
+## Summary
+
+This notebook contains the code to reproduce the structural analysis of DQGlyco. It requires the following inputs per organism:
+
+- The processed PTM table (provided as a supplementary XLSX table in the manuscript)
+- The proteome file (as a fasta file)
+- Structuremap annotation of the organism predictions from AlphaFoldDB (as CSV/TSV file)
+- The processed topological domain information from UniProt (as CSV/TSV file)
+- The processed SIFT scores aggregated at the protein level (as CSV/TSV file)
+
+## Libraries and helper functions
+
+```{r}
 library(org.Mm.eg.db)
+library(org.Hs.eg.db)
 library(here)
 library(seqinr)
 library(tidyverse)
@@ -8,26 +27,34 @@ library(cowplot)
 library(openxlsx)
 library(ggforce)
 
-# load functions
+# load processing and enrichment functions
 source("utils.R")
+```
 
+## Define input files
+
+```{r}
 #### define inputs ####
 # input PTM files
-mouse_nglyco_data <- read.xlsx("data/processed_data/Supplementary_Data_2.xlsx", sheet = "N-glycosylation")
-mouse_oglyco_data <- read.xlsx("data/processed_data/Supplementary_Data_2.xlsx", sheet = "O-glycosylation")
+mouse_nglyco_data <- read.xlsx("../data/processed_data/Supplementary_Data_2.xlsx", sheet = "N-glycosylation")
+mouse_oglyco_data <- read.xlsx("../data/processed_data/Supplementary_Data_2.xlsx", sheet = "O-glycosylation")
 # proteomes
-mouse_proteome_file <- "data/proteomes/mus_musculus.fasta"
-human_proteome_file <- "data/proteomes/homo_sapiens.fasta"
+mouse_proteome_file <- "../data/proteomes/mus_musculus.fasta"
+human_proteome_file <- "../data/proteomes/homo_sapiens.fasta"
 # structuremap annotated alphafold structures
-human_afold_file <- "data/structuremap_data/human_alphafold_annotated.csv"
-mouse_afold_file <- "data/structuremap_data/mouse_alphafold_annotated.csv"
+human_afold_file <- "../data/structuremap_data/human_alphafold_annotated.csv"
+mouse_afold_file <- "../data/structuremap_data/mouse_alphafold_annotated.csv"
 # sift scores
-human_sift_file <- "data/sift_data/human_sift.tsv"
-mouse_sift_file <- "data/sift_data/mouse_sift.tsv"
+human_sift_file <- "../data/sift_data/human_sift.tsv"
+mouse_sift_file <- "../data/sift_data/mouse_sift.tsv"
 # topological domains
-human_topo_file <- "data/topological_domains/human_topological_domains.csv"
-mouse_topo_file <- "data/topological_domains/mouse_topological_domains.csv"
+human_topo_file <- "../data/topological_domains/human_topological_domains.csv"
+mouse_topo_file <- "../data/topological_domains/mouse_topological_domains.csv"
+```
 
+## Preprocess and annotate different data modalities
+
+```{r}
 #### preprocess nglyco data ####
 mouse_proteome_df <- fasta_to_df(mouse_proteome_file) 
 mouse_parsed_nglyco <- process_nglyco_excel(ptm_data = mouse_nglyco_data, ref_proteome_df = mouse_proteome_df)
@@ -67,7 +94,6 @@ glycoform_level_df <- glycan_data %>%
   dplyr::transmute(uniprot_id, AA, glycan_content, 
                    position = position, glycan_all,
                    glycan_type) %>%
-  ## IMPORTANT STEP HERE, DUPLICATES BECAUSE OF MULTIPLE PEPTIDES ARE REMOVED
   distinct()
 
 # first create bins with number of glycoforms
@@ -138,12 +164,19 @@ annotated_mouse_oglyco <- annotate_site_long_df(
   sift_file = mouse_sift_file,
   anno_package = org.Mm.eg.db
 )
+```
 
-#### perform ORA analysis ####
+## Over-representation analyses
+
+```{r}
 int_rois <- c("Cytoplasmic", "Extracellular", "IDR", "STRN", "HELX", "TURN", "BEND", "not_idr_low_acc_5", "not_idr_high_acc_5")
 ora_results_mouse_nglyco <- ora_from_site_long_df(input_annotated_df = annotated_mouse_nglyco, int_rois = int_rois)
 ora_results_mouse_oglyco <- ora_from_site_long_df(input_annotated_df = annotated_mouse_oglyco, int_rois = int_rois)
+```
 
+## Figures
+
+```{r}
 #### figure 3a ####
 toplot <- ora_results_mouse_nglyco %>%
   dplyr::filter(motif %in% c("Extracellular", "Cytoplasmic")) %>%
@@ -419,3 +452,13 @@ outp <- toplot %>%
 
 ggsave("results/fig3f.svg", outp, height = 5, width = 6)
 ggsave("results/fig3f.png", outp, height = 5, width = 6, bg = "white", dpi = 150)
+```
+
+## Session info
+
+```{r}
+sessionInfo()
+```
+
+
+
