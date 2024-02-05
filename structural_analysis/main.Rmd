@@ -1,0 +1,464 @@
+---
+title: "Structural analysis of DQGlyco"
+output: html_document
+---
+
+## Summary
+
+This notebook contains the code to reproduce the structural analysis of DQGlyco. It requires the following inputs per organism:
+
+- The processed PTM table (provided as a supplementary XLSX table in the manuscript)
+- The proteome file (as a fasta file)
+- Structuremap annotation of the organism predictions from AlphaFoldDB (as CSV/TSV file)
+- The processed topological domain information from UniProt (as CSV/TSV file)
+- The processed SIFT scores aggregated at the protein level (as CSV/TSV file)
+
+## Libraries and helper functions
+
+```{r}
+library(org.Mm.eg.db)
+library(org.Hs.eg.db)
+library(here)
+library(seqinr)
+library(tidyverse)
+library(ggpubr)
+library(pbapply)
+library(cowplot)
+library(openxlsx)
+library(ggforce)
+
+# load processing and enrichment functions
+source("utils.R")
+```
+
+## Define input files
+
+```{r}
+#### define inputs ####
+# input PTM files
+mouse_nglyco_data <- read.xlsx("../data/processed_data/Supplementary_Data_2.xlsx", sheet = "N-glycosylation")
+mouse_oglyco_data <- read.xlsx("../data/processed_data/Supplementary_Data_2.xlsx", sheet = "O-glycosylation")
+# proteomes
+mouse_proteome_file <- "../data/proteomes/mus_musculus.fasta"
+human_proteome_file <- "../data/proteomes/homo_sapiens.fasta"
+# structuremap annotated alphafold structures
+human_afold_file <- "../data/structuremap_data/human_alphafold_annotated.csv"
+mouse_afold_file <- "../data/structuremap_data/mouse_alphafold_annotated.csv"
+# sift scores
+human_sift_file <- "../data/sift_data/human_sift.tsv"
+mouse_sift_file <- "../data/sift_data/mouse_sift.tsv"
+# topological domains
+human_topo_file <- "../data/topological_domains/human_topological_domains.csv"
+mouse_topo_file <- "../data/topological_domains/mouse_topological_domains.csv"
+```
+
+## Preprocess and annotate different data modalities
+
+```{r}
+#### preprocess nglyco data ####
+mouse_proteome_df <- fasta_to_df(mouse_proteome_file) 
+mouse_parsed_nglyco <- process_nglyco_excel(ptm_data = mouse_nglyco_data, ref_proteome_df = mouse_proteome_df)
+
+#### preprocess oglyco data ####
+# tidy data
+annotated_data <- mouse_oglyco_data %>%
+  dplyr::filter(modification == "glycosylation") %>%
+  dplyr::transmute(uniprot_id = Protein.ID,
+                   peptide = Peptide,
+                   start = Protein.Start, end = Protein.End,
+                   obs_mod = Observed.Modifications, glycan_type = glycan_type) %>%
+  separate(obs_mod, into = c("glycan_content", "glycan_mass"), sep = " % ") %>%
+  drop_na()
+
+# annotate all the int residues 
+interesting_residues <- "S|T"
+position_df <- pblapply(annotated_data$peptide, function(x) get_mid_position(x, interesting_residues)) %>%
+  bind_rows()
+annotated_data <- annotated_data %>%
+  mutate(AA = position_df$AA, st_position = position_df$position) %>%
+  dplyr::filter(AA != "NOTFOUND") %>%
+  mutate(position = start+st_position-1)
+
+# subset proteome to oglyco proteins
+oglyco_proteome <- mouse_proteome_df %>%
+  dplyr::filter(uniprot_id %in% unique(annotated_data$uniprot_id))
+glycosilable_df <- dplyr::filter(oglyco_proteome, AA %in% c("S", "T")) %>%
+  mutate(glycosilable_st = 1)
+
+# annotate glycan types
+glycan_data <- annotated_data %>%
+  mutate(glycan_all = 1)
+
+# remove glycopeptide level, keeping the glycoform data
+glycoform_level_df <- glycan_data %>%
+  dplyr::transmute(uniprot_id, AA, glycan_content, 
+                   position = position, glycan_all,
+                   glycan_type) %>%
+  distinct()
+
+# first create bins with number of glycoforms
+per_site_n_forms <- glycoform_level_df %>%
+  group_by(uniprot_id, AA, position) %>%
+  summarise(n_forms = n()) %>%
+  ungroup() 
+
+qs <- unique(c(0, quantile(per_site_n_forms$n_forms, seq(0,1,length.out = 4))))
+per_site_quant_nforms <- per_site_n_forms %>%
+  mutate(n_form_cat = cut(per_site_n_forms$n_forms, breaks = qs)) %>%
+  dplyr::transmute(uniprot_id,AA, position, nform_range = paste0("glycan_forms_", n_form_cat), val = 1) %>%
+  pivot_wider(names_from = nform_range, values_from = val) %>%
+  replace(is.na(.), 0)
+
+# next collapse to the site level
+site_level_df <- glycoform_level_df %>%
+  dplyr::transmute(uniprot_id, AA, position, 
+                   glycan_type = paste0("glycan_type_", glycan_type)) %>%
+  pivot_longer(-c(uniprot_id, AA, position)) %>%
+  dplyr::select(-name) %>%
+  distinct() %>%
+  mutate(sub = 1) %>%
+  pivot_wider(id_cols = c(uniprot_id, AA, position), names_from = value, values_from = sub, values_fill = 0) %>%
+  left_join(., per_site_quant_nforms, by = c("uniprot_id", "AA", "position")) %>%
+  mutate(glycan_all = 1) %>%
+  full_join(., glycosilable_df, by = c("uniprot_id", "AA", "position")) %>%
+  replace(is.na(.), 0) %>%
+  mutate(ng_glycosilable_st = ifelse(glycan_all == 0 & glycosilable_st == 1 , 1, 0)) %>%
+  distinct()
+
+# read annotated data
+to_exclude_ptms <- c("glycosilable_st")
+ref_ptm <- "ng_glycosilable_st"
+long_format_df <- site_level_df %>%
+  pivot_longer(-c(uniprot_id, AA, position), names_to = "ptm", values_to = "exists") %>%
+  dplyr::filter(exists != 0) %>%
+  dplyr::filter(! ptm %in% to_exclude_ptms) %>%
+  dplyr::select(-c(exists)) %>%
+  mutate(ptm_cat = case_when(grepl("_all", ptm) ~ "all", 
+                             grepl("_type", ptm) ~ "glycan_type", 
+                             grepl("_forms", ptm) ~ "glycan_nforms", 
+                             grepl(ref_ptm, ptm) ~ "ref"
+  )) %>%
+  mutate(ptm_cat = fct_relevel(ptm_cat, c("ref","all", "glycan_type", "glycan_nforms"))) %>%
+  mutate(raw_nforms = as.numeric(str_replace_all(ptm, "glycan_forms_\\(|,[0-9]+\\]", ""))) %>%
+  mutate(ptm = fct_reorder(ptm, raw_nforms)) %>%
+  dplyr::select(-raw_nforms) %>%
+  arrange(ptm_cat, ptm)
+
+# create parsed object
+mouse_parsed_oglyco <- list(glycoform_df = glycoform_level_df, 
+                           glycosite_wide = site_level_df, 
+                           glycosite_long = long_format_df)
+
+#### annotate n-glycosite data ####
+annotated_mouse_nglyco <- annotate_site_long_df(
+  site_long_df = mouse_parsed_nglyco$glycosite_long,
+  topo_file = mouse_topo_file, 
+  afold_file = mouse_afold_file, 
+  sift_file = mouse_sift_file,
+  anno_package = org.Mm.eg.db
+)
+annotated_mouse_oglyco <- annotate_site_long_df(
+  site_long_df = mouse_parsed_oglyco$glycosite_long,
+  topo_file = mouse_topo_file, 
+  afold_file = mouse_afold_file, 
+  sift_file = mouse_sift_file,
+  anno_package = org.Mm.eg.db
+)
+```
+
+## Over-representation analyses
+
+```{r}
+int_rois <- c("Cytoplasmic", "Extracellular", "IDR", "STRN", "HELX", "TURN", "BEND", "not_idr_low_acc_5", "not_idr_high_acc_5")
+ora_results_mouse_nglyco <- ora_from_site_long_df(input_annotated_df = annotated_mouse_nglyco, int_rois = int_rois)
+ora_results_mouse_oglyco <- ora_from_site_long_df(input_annotated_df = annotated_mouse_oglyco, int_rois = int_rois)
+```
+
+## Figures
+
+```{r}
+#### figure 3a ####
+toplot <- ora_results_mouse_nglyco %>%
+  dplyr::filter(motif %in% c("Extracellular", "Cytoplasmic")) %>%
+  dplyr::filter(ptm_cat != "glycan_type") %>%
+  mutate(motif = fct_rev(fct_inorder(motif)))
+
+dashed_line_data <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  dplyr::select(-c(ptm, ptm_cat))
+
+outp <- toplot %>%
+  ggplot(aes(x = ptm, y = fraction_ptm, fill = is_sig)) +
+  geom_col() +
+  geom_hline(data = dashed_line_data, aes(yintercept = fraction_ptm), lty = 2) +
+  ylab("Fraction in motif") +
+  facet_grid(cols = vars(ptm_cat), rows = vars(motif), space = "free", scales = "free_x") +
+  guides(x = guide_axis(angle = 60)) +
+  theme_cowplot()
+
+ggsave("results/fig3a.svg", outp, height = 5, width = 6)
+ggsave("results/fig3a.png", outp, height = 5, width = 6)
+
+#### figure s5a ####
+toplot <- ora_results_mouse_oglyco %>%
+  dplyr::filter(motif %in% c("Extracellular", "Cytoplasmic")) %>%
+  dplyr::filter(ptm_cat != "glycan_type") %>%
+  mutate(motif = fct_rev(fct_inorder(motif)))
+
+dashed_line_data <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  dplyr::select(-c(ptm, ptm_cat))
+
+outp <-  toplot %>%
+  ggplot(aes(x = ptm, y = fraction_ptm, fill = is_sig)) +
+  geom_col() +
+  geom_hline(data = dashed_line_data, aes(yintercept = fraction_ptm), lty = 2) +
+  ylab("Fraction in motif") +
+  facet_grid(cols = vars(ptm_cat), rows = vars(motif), space = "free", scales = "free_x") +
+  guides(x = guide_axis(angle = 60)) +
+  theme_cowplot()
+
+ggsave("results/figS5a.svg", outp, height = 5, width = 5)
+ggsave("results/figS5a.png", outp, height = 5, width = 5)
+
+#### figure 3b ####
+protein_length_df <- mouse_proteome_df %>%
+  group_by(uniprot_id) %>%
+  summarise(max_length = max(position, na.rm = TRUE)) %>%
+  ungroup()
+
+toplot <- annotated_mouse_nglyco %>%
+  dplyr::filter(ptm_cat != "glycan_type") %>%
+  dplyr::select(ptm, ptm_cat, uniprot_id, position) %>%
+  distinct() %>%
+  left_join(., protein_length_df, by = "uniprot_id") %>%
+  mutate(rel_position = position / max_length) %>%
+  left_join(., pairwise_wilcox_comparison(., int_col = "rel_position"), by = c("ptm", "ptm_cat")) %>%
+  drop_na()
+
+ref_median <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  pull(rel_position) %>%
+  median(., na.rm = TRUE)
+
+outp <- toplot %>%
+  ggplot(aes(x = ptm, y = rel_position, fill = is_sig)) +
+  geom_sina(size = 0.01, alpha = 0.5, pch = 1, color = "lightgray") +
+  geom_boxplot(alpha = 0.5) +
+  facet_grid(cols = vars(ptm_cat), space = "free", scales = "free") + 
+  theme_cowplot() +
+  geom_hline(yintercept = ref_median, lty = 2, size = 0.9) +
+  guides(x = guide_axis(angle = 60))
+
+ggsave("results/fig3b.svg", outp, height = 5, width = 5)
+ggsave("results/fig3b.png", outp, height = 5, width = 5)
+
+#### fig 3c ####
+toplot <- ora_results_mouse_nglyco %>%
+  dplyr::filter(motif %in% c("STRN", "IDR", "HELX", "TURN", "BEND")) %>%
+  dplyr::filter(ptm_cat != "glycan_type") %>%
+  mutate(motif = fct_inorder(motif))
+
+dashed_line_data <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  dplyr::select(-c(ptm, ptm_cat))
+
+outp <- toplot %>%
+  ggplot(aes(x = ptm, y = fraction_ptm, fill = is_sig)) +
+  geom_col() +
+  geom_hline(data = dashed_line_data, aes(yintercept = fraction_ptm), lty = 2) +
+  ylab("Fraction in motif") +
+  facet_grid(cols = vars(ptm_cat), rows = vars(motif), space = "free", scales = "free") +
+  guides(x = guide_axis(angle = 60)) +
+  theme_cowplot()
+
+ggsave("results/fig3c.svg", outp, height = 9, width = 6)
+ggsave("results/fig3c.png", outp, height = 9, width = 6)
+
+
+#### fig s5d ####
+# includes results for fig 3a, 3b and 3c but only including glycan types
+# subp1
+toplot <- ora_results_mouse_nglyco %>%
+  dplyr::filter(motif %in% c("Extracellular", "Cytoplasmic")) %>%
+  dplyr::filter(ptm_cat != "glycan_nforms") %>%
+  mutate(motif = fct_rev(fct_inorder(motif)))
+
+dashed_line_data <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  dplyr::select(-c(ptm, ptm_cat))
+
+outp <- toplot %>%
+  ggplot(aes(x = ptm, y = fraction_ptm, fill = is_sig)) +
+  geom_col() +
+  geom_hline(data = dashed_line_data, aes(yintercept = fraction_ptm), lty = 2) +
+  ylab("Fraction in motif") +
+  facet_grid(cols = vars(ptm_cat), rows = vars(motif), space = "free", scales = "free_x") +
+  guides(x = guide_axis(angle = 60)) +
+  theme_cowplot()
+
+ggsave("results/figS5d.svg", outp, height = 9, width = 6)
+ggsave("results/figS5d.png", outp, height = 9, width = 6)
+
+#### fig s5e ####
+toplot <- annotated_mouse_nglyco %>%
+  dplyr::filter(ptm_cat != "glycan_nforms") %>%
+  dplyr::select(ptm, ptm_cat, uniprot_id, position) %>%
+  distinct() %>%
+  left_join(., protein_length_df, by = "uniprot_id") %>%
+  mutate(rel_position = position / max_length) %>%
+  left_join(., pairwise_wilcox_comparison(., int_col = "rel_position"), by = c("ptm", "ptm_cat")) %>%
+  drop_na()
+
+ref_median <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  pull(rel_position) %>%
+  median(., na.rm = TRUE)
+
+outp <- toplot %>%
+  ggplot(aes(x = ptm, y = rel_position, fill = is_sig)) +
+  geom_sina(size = 0.01, alpha = 0.5, pch = 1, color = "lightgray") +
+  geom_boxplot(alpha = 0.5) +
+  facet_grid(cols = vars(ptm_cat), space = "free", scales = "free") + 
+  theme_cowplot() +
+  geom_hline(yintercept = ref_median, lty = 2, size = 0.9) +
+  guides(x = guide_axis(angle = 60))
+
+ggsave("results/figS5e.svg", outp, height = 9, width = 6)
+ggsave("results/figS5e.png", outp, height = 9, width = 6)
+
+#### fig s5f ####
+# subp3
+toplot <- ora_results_mouse_nglyco %>%
+  dplyr::filter(motif %in% c("STRN", "IDR", "STRN", "IDR", "HELX", "TURN", "BEND")) %>%
+  dplyr::filter(ptm_cat != "glycan_nforms") %>%
+  mutate(motif = fct_inorder(motif))
+
+dashed_line_data <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  dplyr::select(-c(ptm, ptm_cat))
+
+outp <- toplot %>%
+  ggplot(aes(x = ptm, y = fraction_ptm, fill = is_sig)) +
+  geom_col() +
+  geom_hline(data = dashed_line_data, aes(yintercept = fraction_ptm), lty = 2) +
+  ylab("Fraction in motif") +
+  facet_grid(cols = vars(ptm_cat), rows = vars(motif), space = "free", scales = "free_x") +
+  guides(x = guide_axis(angle = 60)) +
+  theme_cowplot() 
+
+ggsave("results/figS5f.svg", outp, height = 18, width = 6)
+ggsave("results/figS5f.png", outp, height = 18, width = 6)
+
+#### fig 3d ####
+toplot <- ora_results_mouse_nglyco %>%
+  dplyr::filter(motif %in% c("not_idr_high_acc_5")) %>%
+  dplyr::filter(ptm_cat != "glycan_type") %>%
+  mutate(motif = fct_inorder(motif))
+
+dashed_line_data <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  dplyr::select(-c(ptm, ptm_cat))
+
+outp <- toplot %>%
+  ggplot(aes(x = ptm, y = fraction_ptm, fill = is_sig)) +
+  geom_bar(stat = "identity") +
+  coord_cartesian(ylim=c(0.8, 1)) +
+  geom_col() +
+  geom_hline(data = dashed_line_data, aes(yintercept = fraction_ptm), lty = 2) +
+  ylab("Fraction in motif") +
+  facet_grid(cols = vars(ptm_cat), rows = vars(motif), space = "free", scales = "free_x") +
+  guides(x = guide_axis(angle = 60)) +
+  theme_cowplot()
+
+ggsave("results/fig3d.svg", outp, height = 5, width = 6)
+ggsave("results/fig3d.png", outp, height = 5, width = 6)
+
+#### fig s5g ####
+toplot <- ora_results_mouse_nglyco %>%
+  dplyr::filter(motif %in% c("not_idr_high_acc_5")) %>%
+  dplyr::filter(ptm_cat != "glycan_nforms") %>%
+  mutate(motif = fct_inorder(motif))
+
+dashed_line_data <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  dplyr::select(-c(ptm, ptm_cat))
+
+outp <- toplot %>%
+  ggplot(aes(x = ptm, y = fraction_ptm, fill = is_sig)) +
+  geom_bar(stat = "identity") +
+  coord_cartesian(ylim=c(0.8, 1)) +
+  geom_col() +
+  geom_hline(data = dashed_line_data, aes(yintercept = fraction_ptm), lty = 2) +
+  ylab("Fraction in motif") +
+  facet_grid(cols = vars(ptm_cat), rows = vars(motif), space = "free", scales = "free_x") +
+  guides(x = guide_axis(angle = 60)) +
+  theme_cowplot()
+
+ggsave("results/figS5g.svg", outp, height = 5, width = 6)
+ggsave("results/figS5g.png", outp, height = 5, width = 6)
+
+#### fig s5h ####
+# read alphafold df
+afold_df <- read_csv(mouse_afold_file)
+topo_domains_df <- read_csv(mouse_topo_file)
+
+# left join
+merged <- afold_df %>%
+  dplyr::select(protein_id, position, nAA_24_180_pae_smooth10) %>%
+  dplyr::inner_join(., topo_domains_df, by = c("protein_id" = "uniprot_id")) %>%
+  mutate(keep = position >= start & position <= end) %>%
+  dplyr::filter(keep) %>%
+  mutate(id = paste0(protein_id, "_", start, "_", end)) %>%
+  group_by(id, description) %>%
+  summarise(mean_ppse_24_180 = mean(nAA_24_180_pae_smooth10)) %>%
+  dplyr::filter(description %in% c("Cytoplasmic", "Extracellular")) %>%
+  mutate(description = factor(description, levels = c("Extracellular", "Cytoplasmic")))
+
+# create simpel boxplot
+outp <- ggplot(merged, aes(x = description, y = mean_ppse_24_180)) +
+  geom_boxplot() + 
+  geom_sina(size = 0.01, alpha = 0.5) +
+  geom_violin(alpha = 0.5) +
+  geom_boxplot(alpha = 0.5) +
+  stat_compare_means(method = "wilcox.test", comparisons = list(c("Cytoplasmic", "Extracellular"))) +
+  theme_cowplot() +
+  theme(axis.title.x = element_blank())
+
+ggsave("results/figS5h.svg", outp, height = 5, width = 5)
+ggsave("results/figS5h.png", outp, height = 5, width = 4, bg = "white", dpi = 150)
+
+#### fig 3f ####
+toplot <- annotated_mouse_nglyco %>%
+  dplyr::filter(ptm_cat != "glycan_type") %>%
+  dplyr::select(ptm, ptm_cat, uniprot_id, position, sift_score) %>%
+  drop_na() %>%
+  left_join(., pairwise_wilcox_comparison(., int_col = "sift_score"), by = c("ptm", "ptm_cat")) %>%
+  drop_na()
+
+ref_median <- toplot %>%
+  dplyr::filter(ptm_cat == "ref") %>%
+  pull(sift_score) %>%
+  median(., na.rm = TRUE)
+
+outp <- toplot %>%
+  ggplot(aes(x = ptm, y = sift_score, fill = is_sig)) +
+  geom_sina(size = 0.01, alpha = 0.5, pch = 1, color = "lightgray") +
+  geom_boxplot(alpha = 0.5) +
+  facet_grid(cols = vars(ptm_cat), space = "free", scales = "free") + 
+  theme_cowplot() +
+  geom_hline(yintercept = ref_median, lty = 2, size = 0.9) +
+  guides(x = guide_axis(angle = 60))
+
+ggsave("results/fig3f.svg", outp, height = 5, width = 6)
+ggsave("results/fig3f.png", outp, height = 5, width = 6, bg = "white", dpi = 150)
+```
+
+## Session info
+
+```{r}
+sessionInfo()
+```
+
+
+
