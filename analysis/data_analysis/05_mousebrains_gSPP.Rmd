@@ -1,0 +1,1531 @@
+---
+title: "Preprocess glycoSPP of mouse microbiome brain project"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "/Users/burtsche/Documents/01_repos/Glycoproteomics/")
+```
+
+## Packages
+
+```{r, message=F, warning =F}
+library(tidyverse)
+library(ggplot2);theme_set(cowplot::theme_cowplot(font_size = 15))
+library("reshape2")
+library(OmnipathR)
+library(viridis)
+library(ggrepel)
+options(connectionObserver = NULL)
+library(org.Mm.eg.db)
+library(knitr)
+library(ggpubr)
+library(RColorBrewer)
+library(ReactomePA)
+library(clusterProfiler)
+library(reactome.db)
+library(ggvenn)
+library(Biostrings)
+library(limma)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+filter <- dplyr::filter
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", "#ffe300ff","#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+
+order_O <- c("O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+pal_O <- c("lightgrey",  "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", '#a65628ff',"#f781bfff")
+names(pal_O) <- c("FP", "O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+tilted <-  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1))
+blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+# Functions
+
+```{r}
+source("~/Documents/generic_functions.R")
+#load("results/2023-10-17_res_mouse_brain_solubility.RData")
+```
+
+# 1. Glyco
+
+## A Preprocess
+
+```{r}
+res_mouse_brain_solubility <- glyco_psm_processing(path = "/Users/burtsche/Documents/01_repos/Glycoproteomics/data/glycoSPP/Mouse_brain_SPP_glyco_psm.tsv", 
+                                                     dataset = "mousebrain_SPP_glyco", 
+                                                     species = "Mus musculus")
+
+names(res_mouse_brain_solubility) <- paste0("glyco_", names(res_mouse_brain_solubility))
+
+
+res_mouse_brain_solubility$TMT_info <- data.frame(
+  sample_glyco = c(
+    "sample09", "sample10", "sample11",
+    "sample12", "sample13", "sample14",
+    "sample15", "sample16"
+  ),
+  sample_FP = c(
+    "sample01", "sample02", "sample03",
+    "sample04", "sample05", "sample06",
+    "sample07", "sample08"
+  ),
+  solubility = c(
+    "NP40", "NP40", "NP40", "NP40",
+    "SDS", "SDS", "SDS", "SDS"
+  ),
+  replicate = c(
+    "rep1","rep2","rep3", "rep4",
+    "rep1","rep2","rep3", "rep4"
+  )
+)
+```
+
+## B Normalisation
+
+```{r}
+res_mouse_brain_solubility$glyco_psm_normalised <-  tt <-
+  res_mouse_brain_solubility$glyco_psm %>%
+  select(Protein.ID, Gene, Peptide, Modified.Peptide, Observed.Modifications, n_position, glycan_type, Gene, Purity, matches("sample")) %>%
+  melt(
+    variable.name = "sample",
+    value.name = "quant",
+    id.vars = c("Protein.ID", "Gene", "Peptide", "Modified.Peptide","Observed.Modifications", "n_position", "glycan_type")
+  ) %>%
+  # add TMT info
+  inner_join(res_mouse_brain_solubility$TMT_info,
+    by = c("sample" = "sample_glyco"),
+    multiple = "all"
+  ) %>%
+  drop_na() %>%
+  mutate(
+    ID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications),
+    dummy = "dummy"
+  ) %>%
+  filter(!is.na(Protein.ID) & !is.na(Modified.Peptide) & !is.na(quant)) %>%
+  mutate(quant = ifelse(quant == 0, NA, quant)) %>%
+  group_by(dummy) %>%
+  group_modify(~ tibble(normalisation_melted_ptmTPP(.))) %>%
+  ungroup() %>%
+  mutate(quant_norm_all = quant_norm) %>% 
+  select(-quant_norm) %>% 
+  group_by(solubility) %>%
+  group_modify(~ tibble(normalisation_melted_ptmTPP(.))) %>%
+  ungroup() %>% 
+  mutate(quant_norm_sol = quant_norm) %>% 
+  select(-quant_norm, -dummy)  
+```
+
+### check
+
+```{r}
+ggplot(res_mouse_brain_solubility$glyco_psm_normalised  %>%
+         distinct(replicate,solubility, Peptide, `Modified.Peptide`,Observed.Modifications, .keep_all = T), 
+       aes(x = as.factor(sample), y = log2(quant), colour = solubility)) +
+  geom_boxplot() +
+  cowplot::theme_cowplot() +
+  #facet_wrap(~replicate) +
+  labs( y = "log2 intensity") +
+  tilted
+
+ggplot(res_mouse_brain_solubility$glyco_psm_normalised  %>%
+         distinct(replicate,solubility, Peptide, `Modified.Peptide`,Observed.Modifications, .keep_all = T), 
+       aes(x = as.factor(sample), y = log2(quant_norm_sol), colour = solubility)) +
+  geom_boxplot() +
+  cowplot::theme_cowplot() +
+  #facet_wrap(~replicate) +
+  labs( y = "log2 quant_norm")
+```
+
+## C PCA
+
+### raw
+
+```{r}
+m <- acast(res_mouse_brain_solubility$glyco_psm_normalised %>% drop_na(),
+  sample ~ Protein.ID + Modified.Peptide + Observed.Modifications,
+  value.var = "quant",
+  fun.aggregate = median,
+  fill = 0
+)
+
+m[m == 0] <- NA
+m <- t(m)
+m <- m[complete.cases(m), ]
+m <- t(m)
+
+m <- log2(m)
+
+m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+  order(decreasing = T) %>%
+  head(6000), ]
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  inner_join(res_mouse_brain_solubility$TMT_info, by = c("sample" = "sample_glyco")) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = as.factor(solubility), shape = replicate)) +
+  geom_point(size = 3) +
+  labs(title = "Glycoproteome", 
+       subtitle = "raw intensities", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+```
+
+### normalised
+
+```{r}
+m <- acast(res_mouse_brain_solubility$glyco_psm_normalised %>% drop_na(),
+  sample ~ Protein.ID + Modified.Peptide + Observed.Modifications,
+  value.var = "quant_norm_sol",
+  fun.aggregate = median,
+  fill = 0
+)
+
+m[m == 0] <- NA
+m <- t(m)
+m <- m[complete.cases(m), ]
+m <- t(m)
+
+m <- log2(m)
+
+m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+  order(decreasing = T) %>%
+  head(6000), ]
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  inner_join(res_mouse_brain_solubility$TMT_info, by = c("sample" = "sample_glyco")) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = as.factor(solubility), shape = replicate)) +
+  geom_point(size = 3) +
+  labs(title = "Glycoproteome", 
+       subtitle = "norm intensities - per sol", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+```
+
+```{r}
+rm(m, pca_rotation)
+```
+
+#2. FP
+
+## A Load and format
+
+```{r}
+res_mouse_brain_solubility$FP <- read_tsv("/Users/burtsche/Documents/01_repos/Glycoproteomics/data/glycoSPP/Mouse_brain_SPP_FP_protein.tsv")
+colnames(res_mouse_brain_solubility$FP) <- gsub(" ", "\\.", colnames(res_mouse_brain_solubility$FP))
+
+res_mouse_brain_solubility$FP <- res_mouse_brain_solubility$FP%>% 
+  filter(grepl("Mus", Organism) & !(grepl("contam", Protein)))
+```
+
+## B Normalise
+
+```{r}
+res_mouse_brain_solubility$FP_normalised <- tt <- res_mouse_brain_solubility$FP %>% 
+  select(Protein.ID, Gene, matches(res_mouse_brain_solubility$TMT_info$sample_FP)) %>% 
+  melt(variable.name = "sample", value.name = "quant") %>% 
+  inner_join(res_mouse_brain_solubility$TMT_info, by = c("sample" = "sample_FP")) %>% 
+  filter(!is.na(solubility) & quant > 0 & is.finite(quant))%>% 
+  drop_na() %>% 
+  mutate(ID = Protein.ID)%>% ungroup() %>% 
+  #group_by(solubility) %>%
+  group_modify(~ tibble(normalisation_melted_ptmTPP(.))) %>%
+  ungroup() %>% 
+  mutate(quant_norm_sol = quant_norm) %>% 
+  select(-quant_norm)  %>% 
+  drop_na()
+```
+
+### check
+
+```{r}
+ggplot(res_mouse_brain_solubility$FP_normalised, 
+       aes(y = log2(quant), x = replicate, colour = solubility)) +
+  geom_boxplot() 
+
+ggplot(res_mouse_brain_solubility$FP_normalised, 
+       aes(y = log2(quant_norm_sol), x = replicate, colour = solubility)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust =1)) +
+  labs(x = "", title = "Full proteome - norm per sol")
+
+```
+
+## C PCA
+
+### raw
+
+```{r}
+m <- acast(res_mouse_brain_solubility$FP_normalised %>% drop_na(),
+  sample ~ Protein.ID ,
+  value.var = "quant",
+  fun.aggregate = median,
+  fill = 0
+)
+
+m[m == 0] <- NA
+m <- t(m)
+m <- m[complete.cases(m), ]
+m <- t(m)
+
+m <- log2(m)
+
+m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+  order(decreasing = T) %>%
+  head(6000), ]
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  left_join(res_mouse_brain_solubility$TMT_info, by = c("sample" = "sample_FP")) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = as.factor(solubility), shape = replicate)) +
+  geom_point(size = 3) +
+  labs(title = "Proteome", 
+       subtitle = "raw intensities", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+```
+
+### normalised
+
+```{r}
+m <- acast(res_mouse_brain_solubility$FP_normalised %>% drop_na(),
+  sample ~ Protein.ID ,
+  value.var = "quant_norm_sol",
+  fun.aggregate = median,
+  fill = 0
+)
+
+m[m == 0] <- NA
+m <- t(m)
+m <- m[complete.cases(m), ]
+m <- t(m)
+
+m <- log2(m)
+
+m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+  order(decreasing = T) %>%
+  head(6000), ]
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  left_join(res_mouse_brain_solubility$TMT_info, by = c("sample" = "sample_FP")) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = as.factor(solubility), shape = replicate)) +
+  geom_point(size = 3) +
+  labs(title = "Proteome", 
+       subtitle = "norm intensities - per sol", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+```
+
+
+```{r}
+rm(m, pca_rotation)
+```
+
+
+#3. Ratios
+
+```{r}
+res_mouse_brain_solubility$solubility_ratios <- tt <- res_mouse_brain_solubility$glyco_psm_normalised %>%
+  mutate(phosphoID = ID) %>% 
+  ungroup() %>%
+  filter(quant > 0) %>%
+  dplyr::select(Protein.ID, Modified.Peptide, Observed.Modifications, intensity = quant, solubility, replicate) %>%
+  drop_na() %>%
+  dcast(Protein.ID + Modified.Peptide + Observed.Modifications + replicate ~ solubility, 
+        value.var = "intensity", 
+        fun.aggregate = sum) %>%
+  drop_na() %>%
+  filter(NP40 > 0 & SDS > 0) %>%
+  mutate(ratio_glyco = (NP40 / SDS)) %>%
+  select(-NP40, -SDS) %>%
+  dcast(Protein.ID + Modified.Peptide + Observed.Modifications ~ replicate)%>%
+  inner_join(
+    res_mouse_brain_solubility$FP_normalised %>%
+      ungroup() %>%
+      filter(quant> 0) %>%
+      dplyr::select(Protein.ID, intensity = quant, solubility, replicate) %>%
+      dcast(Protein.ID + replicate ~ solubility, value.var = "intensity", fun.aggregate = sum) %>%
+      filter(NP40 > 0 & SDS > 0) %>%
+      mutate(ratio_FP = (NP40 / SDS)) %>%
+      select(-NP40, -SDS) %>%
+      dcast(Protein.ID ~ replicate),
+    by = c("Protein.ID"), suffix = c("_glyco", "_FP")
+  ) %>%
+  melt()
+```
+
+```{r}
+res_mouse_brain_solubility$solubility_ratios %>% 
+  separate(variable, into = c("replicate", "dataset")) %>% 
+  #filter(value < 10) %>% 
+  dcast(Protein.ID + Modified.Peptide + Observed.Modifications + replicate ~ dataset)%>% 
+  ggplot(aes(x = log2(FP), y= log2(glyco), colour = log2(glyco))) +
+  geom_hline(yintercept = 0, colour = "grey") +
+  geom_vline(xintercept = 0, colour = "grey") +
+  geom_abline(slope =1, colour = "grey") +
+  geom_point(size = 0.1) + 
+  geom_smooth(method='lm', colour = "grey", linetype = 3)+
+  #stat_cor(method="spearman")+
+  scale_color_gradient2(low = "red",midpoint = 0,mid = "white",high = "blue",space="Lab") +
+  facet_wrap(~replicate) +
+  #lims(x = c(-6, 1), y = c(-6, 6)) +
+  theme_bw() +
+  labs(x = "log2 NP40/SDS FP", y = "log2 NP40/SDS glyco", title = "solubility ratios", subtitle = "raw intensities")
+  
+
+```
+
+## PCA
+
+```{r}
+m <- acast(res_mouse_brain_solubility$solubility_ratios %>% drop_na(),
+  variable ~ Protein.ID + Modified.Peptide + Observed.Modifications,
+  value.var = "value",
+  fun.aggregate = median,
+  fill = 0
+)
+
+m[m == 0] <- NA
+m <- t(m)
+m <- m[complete.cases(m), ]
+m <- t(m)
+
+m <- log2(m)
+
+# m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+#   order(decreasing = T) %>%
+#   head(6000), ]
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  separate(sample, into = c("replicate", "dataset")) %>% 
+  ggplot(aes(x = PC1, y = PC2, colour = dataset, shape = replicate)) +
+  geom_point(size = 3) +
+  labs(title = "Solubility ratios",  
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+```
+
+## Proteins with insoluble sub
+
+```{r}
+res_mouse_brain_solubility$proteins_with_insol_sub <-tt <-  res_mouse_brain_solubility$solubility_ratios %>% 
+  filter(grepl("FP", variable)) %>% 
+  distinct(Protein.ID, variable, value) %>% 
+  group_by(Protein.ID) %>% 
+  summarise(mean_ratio = mean(value)) %>% 
+  filter(mean_ratio < 0.5)
+```
+
+
+#4. Limma
+
+### Input
+
+```{r}
+res_mouse_brain_solubility$eset_all <-
+  res_mouse_brain_solubility$solubility_ratios %>%
+  # filter(Protein.ID %in% tt$Protein.ID) %>%
+  acast(Protein.ID + Modified.Peptide + Observed.Modifications ~ variable) 
+
+res_mouse_brain_solubility$eset_sites <- tt <-
+  res_mouse_brain_solubility$solubility_ratios %>%
+  inner_join(
+    res_mouse_brain_solubility$glyco_psm %>%
+      distinct(Protein.ID, Modified.Peptide, Observed.Modifications, n_position, glycan_type)
+  ) %>%
+  acast(Protein.ID + n_position ~ variable, fun.aggregate = mean)
+
+res_mouse_brain_solubility$eset_types <- tt <-
+  res_mouse_brain_solubility$solubility_ratios %>%
+  inner_join(
+    res_mouse_brain_solubility$glyco_psm %>%
+      distinct(Protein.ID, Modified.Peptide, Observed.Modifications, n_position, glycan_type)
+  ) %>%
+  acast(Protein.ID + n_position + glycan_type ~ variable, fun.aggregate = mean)
+
+res_mouse_brain_solubility$eset_all <- res_mouse_brain_solubility$eset_all[complete.cases(res_mouse_brain_solubility$eset_all),]%>% limma::normalizeMedianValues() %>%  log2()
+res_mouse_brain_solubility$eset_sites <- res_mouse_brain_solubility$eset_sites[complete.cases(res_mouse_brain_solubility$eset_sites),]%>% limma::normalizeMedianValues() %>%  log2()
+res_mouse_brain_solubility$eset_types <- res_mouse_brain_solubility$eset_types[complete.cases(res_mouse_brain_solubility$eset_types),]%>% limma::normalizeMedianValues() %>%  log2()
+```
+
+
+```{r}
+boxplot(res_mouse_brain_solubility$eset_all)
+boxplot(res_mouse_brain_solubility$eset_sites)
+boxplot(res_mouse_brain_solubility$eset_types)
+
+```
+
+### Design
+
+
+```{r}
+s <- str_extract(colnames(res_mouse_brain_solubility$eset_all), "glyco|FP")
+
+res_mouse_brain_solubility$design <- model.matrix(~ 0 + s)
+
+colnames(res_mouse_brain_solubility$design) <- c("FP", "glyco")
+res_mouse_brain_solubility$design
+
+res_mouse_brain_solubility$contr <-
+  cbind(
+    "glyco-FP" = c(-1, 1)
+  )
+
+rm(s)
+```
+
+### Fit
+
+```{r}
+fit <- lmFit(res_mouse_brain_solubility$eset_all, res_mouse_brain_solubility$design)
+fit <- contrasts.fit(fit, res_mouse_brain_solubility$contr)
+fit_all <- eBayes(fit)
+
+fit <- lmFit(res_mouse_brain_solubility$eset_sites, res_mouse_brain_solubility$design)
+fit <- contrasts.fit(fit, res_mouse_brain_solubility$contr)
+fit_sites <- eBayes(fit)
+
+fit <- lmFit(res_mouse_brain_solubility$eset_types, res_mouse_brain_solubility$design)
+fit <- contrasts.fit(fit, res_mouse_brain_solubility$contr)
+fit_types <- eBayes(fit)
+```
+
+### Extract results
+
+```{r}
+mapping <- res_mouse_brain_solubility$glyco_psm %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  distinct(Protein.ID, Gene, ID, n_position, glycan_type, bin) %>%
+  bind_rows(res_mouse_brain_solubility$FP_normalised %>%
+    distinct(Protein.ID, Gene) %>%
+    mutate(ID = Protein.ID)) %>%
+  distinct(Protein.ID, Gene, ID, n_position, glycan_type, bin) %>% 
+  mutate(n_position = as.character(n_position))
+
+res_mouse_brain_solubility$limma_results <- tt <-
+  lapply(colnames(fit_all$coefficients), function(x) {
+    limma::topTable(fit_all, coef = x, number = Inf) %>%
+      mutate(contrast = x, dataset = "ratio_comp_all") %>%
+      rownames_to_column(var = "ID")
+  }) %>%
+  bind_rows() %>%
+  separate(ID, into = c("Protein.ID", "Modified.Peptide", "Observed.Modifications"), sep = "_", remove = F) %>% 
+  left_join(mapping, by = c("Protein.ID", "ID")) %>%
+  bind_rows(
+    lapply(colnames(fit_types$coefficients), function(x) {
+      limma::topTable(fit_types, coef = x, number = Inf) %>%
+        mutate(contrast = x, dataset = "ratio_comp_types") %>%
+        rownames_to_column(var = "ID")
+    }) %>%
+      bind_rows() %>%
+      separate(ID, into = c("Protein.ID", "n_position", "glycan_type"), sep = "_", remove = F) %>% 
+      left_join(mapping %>%  distinct(Protein.ID, n_position, glycan_type, Gene), 
+                by = c("Protein.ID", "n_position", "glycan_type")),
+    lapply(colnames(fit_sites$coefficients), function(x) {
+      limma::topTable(fit_sites, coef = x, number = Inf) %>%
+        mutate(contrast = x, dataset = "ratio_comp_sites") %>%
+        rownames_to_column(var = "ID")
+    }) %>%
+      bind_rows() %>%
+      separate(ID, into = c("Protein.ID", "n_position"), sep = "_", remove = F)%>% 
+      left_join(mapping %>%  distinct(Protein.ID, n_position, Gene), 
+                by = c("Protein.ID", "n_position"))
+  ) %>%
+  mutate(
+    hit = ifelse((logFC > log2(1.5) & adj.P.Val < 0.05), "hit", "no hit"),
+    hit = ifelse((logFC < log2(1 / 1.5) & adj.P.Val < 0.05), "hit", hit)
+  ) %>%
+  mutate(
+    direction = ifelse(logFC > 0 & hit == "hit", "up", "no change"),
+    direction = ifelse(logFC < 0 & hit == "hit", "down", direction)
+  )
+```
+
+## Hits
+
+```{r}
+ggplot(res_mouse_brain_solubility$limma_results %>% filter(hit == "hit"), 
+       aes(glycan_type, fill = direction)) +
+  geom_bar(pos = "dodge") +
+  scale_fill_manual(values = c("dodgerblue4", "indianred")) +
+  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1)) +
+  facet_wrap(~dataset, scales = "free") +
+  labs(y = " # hits")
+
+ggplot(res_mouse_brain_solubility$limma_results %>% filter(hit == "hit" & dataset =="ratio_comp_all"), 
+       aes(bin, fill = direction)) +
+  geom_bar(pos = "dodge") +
+  scale_fill_manual(values = c("dodgerblue4", "indianred")) +
+  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1)) +
+  facet_wrap(glycan_type~dataset, scales = "free") +
+  labs(y = " # hits")
+```
+
+## Volcano
+
+```{r}
+ggplot(
+  res_mouse_brain_solubility$limma_results,
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_grid( ~ dataset, scales = "free") +
+  # theme_bw(14) +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change\nglyco_solubility-protein_solubility", y = "-log10 p-value")
+
+ggplot(
+  res_mouse_brain_solubility$limma_results %>% 
+    filter(Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID),
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_grid( ~ dataset, scales = "free") +
+  # theme_bw(14) +
+  theme(panel.grid = element_blank()) +
+  labs(title = "proteins with at least 25% insoluble",
+    x = "log2 fold-change\nglyco_solubility-protein_solubility", y = "-log10 p-value")
+```
+
+
+```{r}
+ggplot(
+  res_mouse_brain_solubility$limma_results %>% 
+    mutate(n_fuc = str_extract(Observed.Modifications, "Fuc\\(\\d+\\)"),
+           n_sia = str_extract(Observed.Modifications, "NeuGc\\(\\d+\\)|NeuAc\\(\\d+\\)")) %>% 
+    filter(!is.na(n_fuc)),
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_vline(xintercept = 0, size = 0.2) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_grid(dataset ~ n_fuc) +
+  theme_bw() +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change sol_glyco-sol_total", y = "-log10 p-value") 
+
+
+ggplot(
+  res_mouse_brain_solubility$limma_results %>% 
+    mutate(n_fuc = str_extract(Observed.Modifications, "Fuc\\(\\d+\\)"),
+           n_sia = str_extract(Observed.Modifications, "NeuGc\\(\\d+\\)|NeuAc\\(\\d+\\)")) %>% 
+    filter(!is.na(n_sia)),
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_vline(xintercept = 0, size = 0.2) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_grid(dataset ~ n_sia) +
+    theme_bw() +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change sol_glyco-sol_total", y = "-log10 p-value")
+```
+
+```{r}
+res_mouse_brain_solubility$limma_results %>% 
+  group_by(dataset,glycan_type, hit, direction) %>% 
+  count() %>% 
+  group_by(dataset,hit, direction) %>% 
+  mutate(total = sum(n)) %>% 
+  ungroup() %>% 
+  mutate(fraction = n/total) %>% 
+  #filter(hit == "hit") %>% 
+  mutate(glycan_type = factor(glycan_type, levels = order)) %>% 
+  ggplot(aes(x = glycan_type, y = fraction, fill = glycan_type)) +
+  geom_bar(stat = "identity", pos = "dodge") +
+  geom_text(aes(label = round(fraction, 2)), angle = 90, hjust = -0.2) +
+  facet_grid(dataset~direction) +
+  lims(y = c(0, 0.8)) +
+  scale_fill_manual(values = pal) +
+  theme(axis.text.x = element_blank())
+
+res_mouse_brain_solubility$limma_results %>% 
+  filter(Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID) %>% 
+  mutate(glycan_type = factor(glycan_type, levels = order)) %>% 
+  ggplot(aes(x = glycan_type, y = logFC, colour = glycan_type)) +
+  geom_hline(yintercept = 0) +
+  ggforce::geom_sina() +
+  geom_boxplot(colour = "grey", outlier.colour = "white", fill =NA, width = 0.3) +
+  geom_violin(fill = NA) +
+  scale_colour_brewer(palette = "Set1") +
+  facet_wrap(~dataset) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  labs(title = "proteins with at least 25% insoluble")
+
+```
+
+```{r}
+res_mouse_brain_solubility$limma_results %>% 
+  filter(dataset == "ratio_comp_all" & !(glycan_type %in% c("paucimannose", "small", "phospho"))) %>% 
+   filter(Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID) %>% 
+  mutate(glycan_type = factor(glycan_type, levels = order)) %>% 
+  ggplot(aes(x = glycan_type, y = logFC, colour = glycan_type)) +
+  geom_hline(yintercept = 0) +
+  ggforce::geom_sina() +
+  geom_boxplot(colour = "grey", outlier.colour = "white", fill =NA, width = 0.3) +
+  geom_violin(fill = NA) +
+  scale_colour_brewer(palette = "Set1") +
+  stat_compare_means(method = "anova", label.y = 5)+      # Add global p-value
+  stat_compare_means(label = "p.signif", method = "t.test",
+                     ref.group = "sialylated")  +
+  facet_wrap(~dataset) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  labs(title = "proteins with at least 25% insoluble") 
+```
+
+
+```{r}
+library(org.Mm.eg.db)
+#GO:0015630 microtub cy
+# 0007010
+
+# GO:0007155
+
+
+
+ceell_junction GO:0030054
+
+GO:0099561
+
+ecm <- AnnotationDbi::select(org.Mm.eg.db, keytype="GOALL", keys=c("GO:0030054"), columns="UNIPROT")
+
+ioncahnnel <- AnnotationDbi::select(org.Mm.eg.db, keytype="GOALL", keys=c("GO:0034702"), columns="UNIPROT")
+
+# res_mouse_brain_solubility$limma_results %>% 
+#   filter(dataset == "ratio_comp_all" & Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID) %>% 
+#    mutate(anno = ifelse(Protein.ID %in% ecm$UNIPROT, "ion_channel_complex", "other")) %>%
+#   mutate(anno = ifelse(Protein.ID %in% ioncahnnel$UNIPROT, "cell_junction", anno)) %>%
+#   mutate(glycan_type = factor(glycan_type, levels = order)) %>% 
+#   ggplot(aes(x = anno, y = logFC, colour = anno)) +
+#   geom_hline(yintercept = 0) +
+#   ggforce::geom_sina() +
+#   geom_boxplot(colour = "grey", outlier.colour = NA, fill =NA, width = 0.3) +
+#   geom_violin(fill = NA) +
+#   scale_colour_brewer(palette = "Set1") +
+#   facet_wrap(~dataset) +
+#   theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) 
+
+res_mouse_brain_solubility$limma_results %>% 
+  filter(dataset == "ratio_comp_all" & Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID & Protein.ID %in% ecm$UNIPROT) %>% 
+  mutate(pathway = "synaptic membrane adhesion\nto extracellular matrix") %>%
+  bind_rows(
+  # res_mouse_brain_solubility$limma_results %>% 
+  # filter(dataset == "ratio_comp_all" & Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID & Protein.ID %in% ioncahnnel$UNIPROT) %>% 
+  # mutate(pathway = "ion channel complex"), 
+  res_mouse_brain_solubility$limma_results %>% 
+  filter(dataset == "ratio_comp_all" & Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID & !(Protein.ID %in% ioncahnnel$UNIPROT) & !(Protein.ID %in% ecm$UNIPROT)) %>% 
+  mutate(pathway = "other")
+  ) %>% 
+  ggplot(aes(x = pathway, y = logFC, colour = pathway)) +
+  geom_hline(yintercept = 0) +
+  ggforce::geom_sina(size = 2, alpha = 0.2) +
+  stat_summary(aes(group = pathway), fun = median, geom = "crossbar", colour = "black") +
+  geom_boxplot(colour = "black", outlier.colour = NA, fill =NA, width = 0.3) +
+  ggpubr::stat_compare_means(aes(group = pathway), label = "p.signif",method = "t.test", comparisons = list(c("other","synaptic membrane adhesion\nto extracellular matrix"))) +
+  #facet_wrap(~glycan_type) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), legend.position = "none") 
+  ylim(c(-2.5, 6.5))
+```
+
+
+# Save
+
+```{r}
+save(res_mouse_brain_solubility, file = paste0("results/", Sys.Date(), "_res_mouse_brain_solubility.RData"))
+```
+
+
+
+#5. Visualisations & Compare to Microbiome
+
+```{r}
+load("results/2024-01-24_res_microbiome_mousebrain_Nglyco.RData")
+```
+
+```{r}
+hits <-   res_mouse_brain_solubility$limma_results %>%  filter(hit == "hit" & dataset == "ratio_comp_all") %>%  distinct(ID, Protein.ID)
+
+shared_hits <- res_microbiome_mousebrain_Nglyco$limma_results   %>%  
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>% 
+  filter(hit == "hit") %>% 
+  distinct(ID, Protein.ID)%>% 
+  filter(ID %in% hits$ID) %>% 
+  distinct(Protein.ID, ID)
+shared_hits %>%  distinct(Protein.ID) %>%  nrow
+
+microbiome_hits <- res_microbiome_mousebrain_Nglyco$limma_results   %>%  
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_"),
+         direction = ifelse(logFC > 0, "up", "down")) %>% 
+  filter(hit == "hit" & contrast == "community-germfree") %>% 
+  distinct(ID, direction)
+
+microbiome_hits_SPPqunat <- res_microbiome_mousebrain_Nglyco$limma_results   %>%  
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_"),
+         direction = ifelse(logFC > 0, "up", "down")) %>% 
+  filter(hit == "hit" & contrast == "community-germfree") %>% 
+  filter(ID %in% res_mouse_brain_solubility$limma_results $ID) %>% 
+  distinct(Protein.ID)
+
+res_microbiome_mousebrain_Nglyco$limma_results   %>%  
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>% 
+  filter(ID %in%  res_mouse_brain_solubility$limma_results$ID) %>% 
+  distinct(ID) %>%  nrow
+```
+
+# Save
+
+```{r}
+res_mouse_brain_solubility$limma_results %>% 
+  mutate(microbiome_hits = ifelse(ID %in% microbiome_hits$ID, "hit", "no hit")) %>% 
+  write_tsv(paste0("results/", Sys.Date(), "_gSPP_mousebrains_limmaresults_all.tsv"))
+```
+
+
+## pdfs
+
+```{r, fig.height=3, fig.width=6}
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+
+pal <- c("grey80", "#E41A1C", "#377EB8", "#4DAF4A","#984EA3" ,"#FF7F00", "#FFFF33", "#A65628")
+names(pal) <- c("FP", order)
+
+hits <- res_mouse_brain_solubility$limma_results %>%  filter(hit == "hit")
+```
+
+### one example
+
+```{r}
+tt <-
+  res_mouse_brain_solubility$solubility_ratios %>%
+  inner_join(
+    res_mouse_brain_solubility$glyco_psm %>%
+      distinct(Protein.ID, Modified.Peptide, Observed.Modifications, n_position, glycan_type)
+  ) %>% 
+   distinct(Protein.ID, Modified.Peptide, Observed.Modifications, n_position, glycan_type) %>% 
+  group_by(Protein.ID, n_position) %>% 
+  count(name = "n_forms_site") %>% 
+  mutate(n_position =as.character(n_position)) %>% 
+  inner_join(res_mouse_brain_solubility$limma_results) %>% 
+  filter(hit == "hit")
+```
+
+
+```{r}
+t <- "O08532"
+
+res_mouse_brain_solubility$solubility_ratios %>%  
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>% 
+  filter(grepl(t,Protein.ID )) %>% 
+  #mutate(hit = ifelse(ID%in%hits$ID, "hit", "no hit"))  %>%
+  separate(variable, into = c("replicate", "dataset")) %>% 
+  dplyr::rename(ratio = value) %>% 
+  left_join(res_mouse_brain_solubility$glyco_psm_normalised %>%  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%  distinct(ID,  n_position, glycan_type), by = "ID") %>% 
+  mutate(n_position = as.factor(n_position), 
+         colouring = ifelse(dataset == "glyco", glycan_type, "FP")) %>% 
+  mutate(colouring = factor(colouring, levels = c("FP", order))) %>% 
+  #filter(dataset != "FP") %>% 
+  #filter(hit != "no hit") %>% 
+  ggplot(aes(x = glycan_type, y= log2(ratio), colour = colouring, group = ID)) +
+  geom_hline(yintercept = 0) +
+  geom_point(position = position_dodge(width = 0.7), size = 2) +
+  scale_color_manual(values = pal) +
+  scale_alpha_manual(values = c("hit"=1, "no hit" = 1)) +
+  #facet_wrap(~hit, scales = "free_x") +
+  labs(y = "log2(NP40/SDS)") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank()) +
+  facet_wrap(~n_position, nrow = 1, scale = "free_x") +
+  labs(title = unique(na.omit(res_mouse_brain_solubility$limma_results$Gene[res_mouse_brain_solubility$limma_results$Protein.ID == t])))
+```
+
+### all proteins
+
+```{r, fig.height=3, fig.width=6}
+cleaning <- res_mouse_brain_solubility$solubility_ratios %>% 
+  filter(!grepl("FP", variable)) %>% 
+  group_by(Protein.ID, Modified.Peptide, Observed.Modifications) %>% 
+  summarise(m = mean((value)), sd= sd(log2(value))) %>% 
+  mutate(arb = ifelse(m > 1.4, "biggerNP40", "normal")) %>% 
+  filter(sd < 0.25)
+
+pdf("20231011_mousebrains_gSPP_notnorm_cleaned.pdf", width = 15, height = 8)
+# int <- res_mouse_brain_solubility$limma_results %>%
+#   filter(ID %in% shared_hits$ID) %>%
+#   distinct(Gene, Protein.ID)
+
+# int <- res_mouse_brain_solubility$limma_results %>% 
+#   filter(ID %in% microbiome_hits$ID) %>% 
+#   distinct(Gene, Protein.ID)
+
+# hits <-   res_mouse_brain_solubility$limma_results %>%  filter(hit == "hit") 
+# int <- hits%>% 
+#   distinct( Protein.ID)
+
+int <- res_mouse_brain_solubility$limma_results%>% 
+  inner_join(cleaning) %>% 
+  distinct(Protein.ID) 
+
+
+for (t in int$Protein.ID){
+  
+  input <- res_mouse_brain_solubility$solubility_ratios %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  filter(grepl(t, Protein.ID)) %>%
+  mutate(hit = ifelse(ID%in%hits$ID, "hit", "no hit"))  %>%
+  # mutate(
+  #   hit = ifelse(ID %in% hits$ID, "solubility hit", "no hit"),
+  #   hit = ifelse(ID %in% shared_hits$ID, "both", hit)
+  # ) %>%
+  # mutate(
+  #   hit = ifelse(ID %in% microbiome_hits$ID, "microbiome hit", "no microbiome hit")
+  # ) %>%
+  separate(variable, into = c("replicate", "dataset")) %>%
+  dplyr::rename(ratio = value) %>%
+  left_join(
+    res_mouse_brain_solubility$glyco_psm_normalised %>%
+      mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+      distinct(ID, n_position, glycan_type),
+    by = "ID"
+  ) %>%
+  mutate(
+    n_position = as.factor(n_position),
+    colouring = ifelse(dataset == "glyco", glycan_type, "FP")
+  ) %>%
+  mutate(
+    colouring = factor(colouring, levels = c("FP", order)),
+    log2_ratio = log2(ratio)
+  ) %>%
+  drop_na() %>% 
+    inner_join(cleaning) %>% 
+    filter(sd <0.25)
+    
+  upper <- max(2, max(input$log2_ratio))
+  lower <- min(-2, min(input$log2_ratio))
+  
+  prot_median <- input %>% 
+    filter(colouring == "FP") %>% 
+    group_by(Protein.ID) %>% 
+    summarise(median_ratio = median(log2_ratio))
+  
+  p <- input %>% 
+    group_by(Protein.ID,n_position,glycan_type, colouring, ID, hit) %>% 
+    summarise(ratio = mean(ratio), .groups = "drop") %>% 
+  ggplot(aes(
+    x = glycan_type,
+    y = log2(ratio),
+    colour = colouring,
+    group = ID
+    #shape = hit
+    #alpha = hit
+  )) +
+  geom_hline(yintercept = c(0, prot_median$median_ratio), colour = c("black")) +
+    geom_hline(yintercept = c(prot_median$median_ratio), colour = c("grey")) +
+  geom_point(position = position_dodge(width = 0.7), size = 2) +
+  scale_color_manual(values = pal) +
+  #scale_alpha_manual(values = c("hit" = 1, "no hit" = 0.3)) +
+  labs(y = "log2(NP40/SDS)") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank()) +
+  facet_wrap(~n_position, nrow = 1, scale = "free_x") +
+  lims(y = c(lower - 0.2, upper + 0.2)) +
+  labs(title = unique(na.omit(res_mouse_brain_solubility$limma_results$Gene[res_mouse_brain_solubility$limma_results$Protein.ID == t])))
+plot(p)
+}
+dev.off()
+```
+
+### microbiome hits
+
+Completely diff visualisation again to fit CPs needs
+
+```{r, fig.height=3, fig.width=6}
+pdf("20230913_mousebrains_gSPP_microhits2.pdf", width = 15, height = 8)
+# int <- res_mouse_brain_solubility$limma_results %>% 
+#   filter(ID %in% shared_hits$ID) %>% 
+#   distinct(Gene, Protein.ID)
+
+int <- res_mouse_brain_solubility$limma_results %>% 
+  filter(ID %in% microbiome_hits$ID) %>% 
+  distinct(Gene, Protein.ID)
+
+for (t in int$Protein.ID){
+  
+  input <- res_mouse_brain_solubility$solubility_ratios %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  left_join(microbiome_hits, by = "ID")%>% 
+  filter(grepl(t, Protein.ID))%>%
+  mutate(
+    hit = ifelse(is.na(direction), "no microbiome hit", direction)
+  ) %>%
+  separate(variable, into = c("replicate", "dataset")) %>%
+  dplyr::rename(ratio = value) %>%
+  left_join(
+    res_mouse_brain_solubility$glyco_psm_normalised %>%
+      mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+      distinct(ID, n_position, glycan_type),
+    by = "ID"
+  ) %>%
+  mutate(
+    n_position = as.factor(n_position),
+    colouring = ifelse(dataset == "glyco", glycan_type, "FP")
+  ) %>%
+  mutate(
+    colouring = factor(colouring, levels = c("FP", order)),
+    log2_ratio = log2(ratio)
+  ) %>% 
+    select(-direction)%>%
+  drop_na() 
+  
+  upper <- max(2, max(input$log2_ratio))
+  lower <- min(-2, min(input$log2_ratio))
+  
+  prot_median <- input %>% 
+    filter(colouring == "FP") %>% 
+    group_by(Protein.ID) %>% 
+    summarise(median_ratio = median(log2_ratio))
+  
+  p <- input %>% 
+    group_by(Protein.ID,n_position,glycan_type, colouring, ID, hit) %>% 
+    summarise(ratio = mean(ratio), .groups = "drop") %>%
+  ggplot(aes(
+    x = glycan_type,
+    y = log2(ratio),
+    colour = colouring,
+    group = ID,
+    shape = hit
+    #alpha = hit
+  )) +
+  geom_hline(yintercept = c(0, prot_median$median_ratio), colour = c("black")) +
+  geom_hline(yintercept = c(prot_median$median_ratio), colour = c("grey")) +
+  geom_point(position = position_dodge(width = 0.7), size = 2) +
+  scale_color_manual(values = pal) +
+  scale_shape_manual(values = c("up" = 15, "down" = 16,  "no microbiome hit" = 17)) +
+  lims(y = c(lower - 0.2, upper + 0.2)) +
+  labs(y = "log2(NP40/SDS)") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(), axis.title.x = element_blank()) +
+  facet_wrap(~n_position, nrow = 1, scale = "free_x") +
+  labs(title = unique(na.omit(res_mouse_brain_solubility$limma_results$Gene[res_mouse_brain_solubility$limma_results$Protein.ID == t])))
+plot(p)
+}
+dev.off()
+```
+
+# 6. SD calcualtions
+
+```{r}
+res_mouse_brain_solubility$solubility_ratios %>% 
+  filter(value < 10) %>% 
+  ggplot(aes(x = value)) +
+  geom_histogram(binwidth = 0.1)
+
+res_mouse_brain_solubility$df_sd <- res_mouse_brain_solubility$solubility_ratios %>%
+  filter(grepl("glyco", variable)) %>% 
+  left_join(res_mouse_brain_solubility$limma_results %>%  
+              distinct(Gene, Protein.ID, Modified.Peptide, n_position, Observed.Modifications, glycan_type),
+            by = join_by(Protein.ID, Modified.Peptide, Observed.Modifications)
+            ) %>% 
+  drop_na() %>% 
+  group_by(Gene,Protein.ID, n_position) %>% 
+  summarise(sd_solubility_ratio = sd(value, na.rm =T))
+
+res_mouse_brain_solubility$df_sd %>% 
+  ggplot(aes(x =sd_solubility_ratio )) +
+  geom_histogram(binwidth = 0.1)
+
+res_mouse_brain_solubility$df_sd$sd_solubility_ratio %>%  summary()
+```
+
+#7. Enrichment
+
+## ORA string
+
+```{r}
+library(STRINGdb)
+string_db <- STRINGdb$new( version="11.5", species=10090,
+                           score_threshold=200, network_type="full", input_directory="")
+
+example1_mapped <- res_mouse_brain_solubility$glyco_psm %>%  ungroup()  %>%  distinct(Gene) %>% as.data.frame()
+example1_mapped <- string_db$map(example1_mapped, "Gene", removeUnmappedRows = TRUE )
+
+string_db <- STRINGdb$new( version="11.5", species=10090,
+                           score_threshold=200, network_type="full", input_directory="",
+                           backgroundV =  unique(example1_mapped$STRING_id))
+```
+
+### hits
+
+```{r}
+res_mouse_brain_solubility$ER_string <- tt <- 
+  res_mouse_brain_solubility$limma_results %>%
+  filter(hit == "hit") %>% 
+  distinct(dataset, direction, Gene) %>%
+  group_by(dataset, direction) %>%
+  nest(Gene) %>%
+ mutate(ER = map(data, function(df) {
+    ER = string_db$get_enrichment(df$Gene)
+    if(nrow(ER) >0){
+       ER = as.data.frame(ER)
+    } else {
+      ER = data.frame(category = "dummy")
+    }
+  })) %>%
+  select(-data) %>%
+  unnest(cols = c(ER))
+
+res_mouse_brain_solubility$ER_string %>% 
+  filter(grepl("Component|Function|Inter|KEGG|Process|RCTM", category)) %>% 
+  group_by(dataset, direction, category) %>% arrange(fdr) %>% slice_head(n=3) %>% 
+  ggplot(aes(x= -log10(fdr), y= reorder(description, fdr), size = number_of_genes, colour = dataset, shape = direction)) +
+  geom_vline(xintercept = -log10(0.01)) +
+  geom_point() +
+  scale_color_brewer(palette = "Set2") +
+  theme(panel.grid.major.y = element_line(colour = "grey"))
+
+# res_mouse_brain_solubility$ER_string %>%  write_tsv(paste0("results/", Sys.Date(), "_gSPP_mousebrains_ORA_string.tsv"))
+
+res_mouse_brain_solubility$ER_string_insoluble_sub <- tt <- 
+  res_mouse_brain_solubility$limma_results %>%
+  filter(dataset == "ratio_comp_all"&hit == "hit" & Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID & logFC < 0) %>% 
+  distinct(dataset, direction, Gene) %>%
+  group_by(dataset, direction) %>%
+  nest(Gene) %>%
+ mutate(ER = map(data, function(df) {
+    ER = string_db$get_enrichment(df$Gene)
+    if(nrow(ER) >0){
+       ER = as.data.frame(ER)
+    } else {
+      ER = data.frame(category = "dummy")
+    }
+  })) %>%
+  select(-data) %>%
+  unnest()
+
+res_mouse_brain_solubility$ER_string_insoluble_sub %>% 
+  filter(grepl("Component|Function|Inter|KEGG|Process|RCTM", category)) %>% 
+  group_by(dataset, direction, category) %>% arrange(fdr) %>% slice_head(n=3) %>% 
+  ggplot(aes(x= -log10(fdr), y= reorder(description, fdr), size = number_of_genes, colour = dataset, shape = direction)) +
+  geom_vline(xintercept = -log10(0.01)) +
+  geom_point() +
+  scale_color_brewer(palette = "Set2") +
+  theme(panel.grid.major.y = element_line(colour = "grey")) +
+  labs(title = "proteins with insoluble subpopulation")
+
+# res_mouse_brain_solubility$ER_string_insoluble_sub %>%  write_tsv(paste0("results/", Sys.Date(), "_gSPP_mousebrains_ORA_string_insolublesubpopulation.tsv"))
+```
+
+```{r}
+res_mouse_brain_solubility$ER_string_insoluble_sub <- tt <- 
+  res_mouse_brain_solubility$limma_results %>%
+  filter(dataset == "ratio_comp_all"&hit == "hit" & Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID) %>% 
+  group_by(Gene, direction) %>% 
+  count() %>% 
+  filter(n == 1)%>% 
+  distinct(direction, Gene)%>%
+  group_by(direction) %>%
+  nest(Gene) %>%
+ mutate(ER = map(data, function(df) {
+    ER = string_db$get_enrichment(df$Gene)
+    if(nrow(ER) >0){
+       ER = as.data.frame(ER)
+    } else {
+      ER = data.frame(category = "dummy")
+    }
+  })) %>%
+  select(-data) %>%
+  unnest()
+```
+
+
+### sd
+
+```{r}
+cutoff = 0.1
+res_mouse_brain_solubility$ER_string_sd <- tt <- 
+  res_mouse_brain_solubility$df_sd %>%
+  ungroup() %>% 
+  mutate(hit = ifelse(sd_solubility_ratio > cutoff, "high sd", "low sd"), dataset = "sd_calc") %>%
+  filter(hit == "high sd") %>% 
+  distinct(dataset, Gene) %>%
+  group_by(dataset) %>%
+  nest(Gene)%>%
+ mutate(ER = map(data, function(df) {
+    ER = string_db$get_enrichment(df$Gene)
+    if(nrow(ER) >0){
+       ER = as.data.frame(ER)
+    } else {
+      ER = data.frame(category = "dummy")
+    }
+  })) %>%
+  select(-data) %>%
+  unnest(cols = c(ER))
+```
+
+
+## GSEA MSigdb
+
+```{r}
+library(decoupleR)
+
+msigdf_decoupler <- msigdbr::msigdbr(species = "Mus musculus", category = "C2") %>%
+  #filter(gs_subcat == "CP:WIKIPATHWAYS") %>% 
+  transmute(source = gs_name, mor = 1, target = gene_symbol) %>%
+  distinct()
+```
+
+
+```{r}
+res_mouse_brain_solubility$decoupler_results <- tt <-
+  res_mouse_brain_solubility$limma_results %>% 
+  group_by(dataset,Gene) %>%
+  mutate(logFC_max = max(abs(logFC))) %>% 
+  ungroup()%>% 
+  filter(abs(logFC) == logFC_max)%>% 
+  distinct(dataset,Gene, logFC)%>% 
+  ungroup() %>% 
+  drop_na() %>% 
+  filter(!is.na(logFC) & is.finite(logFC)) %>% 
+  nest(data = c(Gene, logFC))%>% 
+  mutate(ER = map(data, function(df) { 
+    x = df %>%  acast(Gene ~ dataset, value.var = "logFC", fill = 0)
+    decoupleR::run_wmean(mat = x, network = msigdf_decoupler)
+  }
+)) %>% 
+  select(-data) %>% 
+  unnest(cols = c(ER))
+
+```
+
+# 8. Subcellular
+
+```{r}
+locations_of_interest <- c("Golgi apparatus", "Plasma membrane", "Endoplasmic reticulum", "Lysosome", "Cytoplasm", "Extracellular")
+
+compartment_anno <- tt <- read_tsv("data/combined_loc_df.tsv")%>%
+  mutate(description = ifelse(grepl("Extracellular", description), "Extracellular", description)) %>% 
+  filter(description %in% locations_of_interest) %>% 
+  group_by(gene) %>%
+  filter(score > 2.5) %>%
+  mutate(species = ifelse(grepl("MUS", ensembl_prot), "mus musculus", "homo sapiens")) %>% 
+  rename(Gene = gene) %>% 
+  group_by(Gene) %>% 
+  mutate(n_annos =n()) 
+
+pm_proteins <- compartment_anno %>% 
+  filter(description == "Plasma membrane")
+
+extracell_proteins <- compartment_anno %>% 
+  filter(description == "Extracellular")
+
+compartment_anno <- compartment_anno %>% 
+  mutate(description = ifelse(Gene %in% extracell_proteins$Gene, "Extracellular", description)) %>% 
+  mutate(description = ifelse(Gene %in% pm_proteins$Gene, "Plasma membrane", description)) %>% 
+  distinct(species, Gene, description)
+
+res_mouse_brain_solubility$limma_results %>% 
+  inner_join(compartment_anno %>%  distinct(Gene, description)) %>% 
+  mutate(insol = ifelse(Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID, "part insol", "sol")) %>% 
+  ggplot(aes(x = description, y = t, colour =insol)) +
+  geom_hline(yintercept = 0, linetype =3) +
+  ggforce::geom_sina() +
+  geom_boxplot(aes(fill = insol), colour = "black", pos = "dodge", alpha = 0.1) +
+  facet_wrap(insol~dataset, scales = "free") +
+  scale_fill_brewer(palette = "Dark2") +
+  scale_colour_brewer(palette = "Dark2") +
+  tilted
+
+res_mouse_brain_solubility$limma_results %>% 
+  inner_join(compartment_anno %>%  distinct(Gene, description)) %>% 
+  mutate(insol = ifelse(Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID, "part insol", "sol")) %>% 
+  ggplot(aes(x = description, fill =insol)) +
+  geom_bar(pos = "fill") +
+  scale_fill_brewer(palette = "Dark2") +
+  facet_wrap(hit~dataset) +
+  tilted
+
+res_mouse_brain_solubility$limma_results %>% 
+  inner_join(compartment_anno %>%  distinct(Gene, description)) %>% 
+  mutate(insol = ifelse(Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID, "part insol", "sol")) %>% 
+  filter(hit == "hit") %>% 
+  ggplot(aes(x = description, fill =direction)) +
+  geom_bar() +
+  facet_wrap(~dataset, scales = "free") +
+  tilted
+  
+```
+
+# 9. Domains
+Retrieve domain annotations from interpro
+
+```{r}
+library(biomaRt)
+ensembl <- useEnsembl(biomart = "genes", dataset = "mmusculus_gene_ensembl")
+
+ipro = getBM(attributes=c("uniprot_gn_id", "interpro","interpro_description","interpro_short_description", "interpro_start", "interpro_end"), 
+             filters = "uniprot_gn_id",
+             values= unique(res_mouse_brain_solubility$glyco_psm$Protein.ID), 
+             mart=ensembl)
+
+```
+
+```{r}
+sites_with_1change <- res_mouse_brain_solubility$limma_results %>% 
+  filter(Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID & hit == "hit") %>% 
+  distinct(Protein.ID, n_position) %>% 
+  mutate(siteID = paste0(Protein.ID, "_", n_position))
+```
+
+
+```{r}
+res_mouse_brain_solubility$domain_ORA <- tt <-
+  res_mouse_brain_solubility$limma_results %>% 
+  filter(Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID) %>% 
+  mutate(siteID = paste0(Protein.ID, "_", n_position))%>% 
+  distinct(siteID, n_position, ID, Protein.ID) %>% 
+  mutate(hit = ifelse(siteID %in% sites_with_1change$siteID, "at least 1 change", "no change")) %>% 
+  ungroup()%>% 
+  inner_join(ipro,by = c("Protein.ID"="uniprot_gn_id"), multiple = "all") %>% 
+  mutate(n_position = as.numeric(n_position)) %>% 
+  mutate(in_domain = ifelse(n_position> interpro_start & n_position < interpro_end, TRUE, FALSE))%>% 
+  filter(!is.na(interpro_description) & !is.na(interpro_start)) %>% select(Protein.ID, hit, interpro_description, in_domain, n_position)%>% 
+  filter(in_domain == T) %>% 
+  ungroup() %>% 
+  mutate(siteID = paste0(Protein.ID, "_", n_position)) %>% 
+  mutate(n_sites = length(unique(siteID))) %>% 
+  group_by(hit) %>% 
+  mutate(n_glycan = length(unique(siteID))) %>% 
+  group_by(interpro_description) %>% 
+  mutate(n_domain = length(unique(siteID))) %>% 
+  group_by(hit, interpro_description) %>% 
+  mutate(n_type_domain = length(unique(siteID))) %>% 
+  ungroup()%>% 
+  distinct(hit, interpro_description, n_sites,n_glycan, n_domain, n_type_domain) %>% 
+  rowwise() %>% 
+  mutate(FT = fisher.test(x = matrix(c(n_type_domain, n_glycan-n_type_domain, n_domain-n_type_domain, n_sites-n_glycan-n_domain+n_type_domain), nrow = 2, byrow = T))$p.value,
+         odds_ratio = fisher.test(x = matrix(c(n_type_domain, n_glycan-n_type_domain, n_domain-n_type_domain, n_sites-n_glycan-n_domain+n_type_domain), nrow = 2, byrow = T))$estimate)%>% 
+  mutate(adj.p.val = p.adjust(FT, method = "BH"),
+         hit_anno = ifelse(adj.p.val < 0.05 & n_type_domain > 10, "hit (adj.p < 0.05)", "no hit (adj.p > 0.05)"))
+
+
+hits <- res_mouse_brain_solubility$domain_ORA  %>% 
+  ungroup() %>% 
+  filter(hit_anno == "hit (adj.p < 0.05)")
+
+res_mouse_brain_solubility$domain_ORA  %>% 
+  filter(interpro_description %in% hits$interpro_description) 
+
+hits %>% 
+  mutate(odds_ratio = ifelse(!is.finite(odds_ratio),20, odds_ratio))%>% 
+  ggplot(aes(y = interpro_description, x = log2(odds_ratio), size = n_type_domain, colour = hit)) +
+  #geom_point(shape = 15) +
+  ggbeeswarm::geom_beeswarm(cex = 4)+
+  geom_vline(xintercept = c(-1.7, 0, 1.7), linetype = c(3,1,3)) +
+  #scale_colour_manual(values = mycolors) +
+  scale_size(range = c(3, 6)) +
+  labs(y = "") +
+  theme_bw(base_size = 14)
+
+```
+
+## sd calc
+
+```{r}
+cutoff = 0.14687
+domain_ORA_sd <- df_sd %>% 
+  mutate(siteID = paste0(Protein.ID, "_", n_position))%>% 
+  mutate(hit = ifelse(sd_solubility_ratio > cutoff, "high sd", "low sd")) %>% 
+  distinct(siteID, n_position, Protein.ID, hit) %>% 
+  inner_join(ipro,by = c("Protein.ID"="uniprot_gn_id"), multiple = "all") %>% 
+  mutate(n_position = as.numeric(n_position)) %>% 
+  mutate(in_domain = ifelse(n_position> interpro_start & n_position < interpro_end, TRUE, FALSE))%>% 
+  filter(!is.na(interpro_description) & !is.na(interpro_start)) %>% select(Protein.ID, hit, interpro_description, in_domain, n_position)%>% 
+  filter(in_domain == T) %>% 
+  ungroup() %>% 
+  mutate(siteID = paste0(Protein.ID, "_", n_position)) %>% 
+  mutate(n_sites = length(unique(siteID))) %>% 
+  group_by(hit) %>% 
+  mutate(n_glycan = length(unique(siteID))) %>% 
+  group_by(interpro_description) %>% 
+  mutate(n_domain = length(unique(siteID))) %>% 
+  group_by(hit, interpro_description) %>% 
+  mutate(n_type_domain = length(unique(siteID))) %>% 
+  ungroup()%>% 
+  distinct(hit, interpro_description, n_sites,n_glycan, n_domain, n_type_domain) %>% 
+  rowwise() %>% 
+  mutate(FT = fisher.test(x = matrix(c(n_type_domain, n_glycan-n_type_domain, n_domain-n_type_domain, n_sites-n_glycan-n_domain+n_type_domain), nrow = 2, byrow = T))$p.value,
+         odds_ratio = fisher.test(x = matrix(c(n_type_domain, n_glycan-n_type_domain, n_domain-n_type_domain, n_sites-n_glycan-n_domain+n_type_domain), nrow = 2, byrow = T))$estimate)%>% 
+  mutate(adj.p.val = p.adjust(FT, method = "BH"),
+         hit_anno = ifelse(adj.p.val < 0.05 & n_type_domain > 10, "hit (adj.p < 0.05)", "no hit (adj.p > 0.05)"))
+
+
+hits <- domain_ORA_sd %>% 
+  ungroup() %>% 
+  filter(hit_anno == "hit (adj.p < 0.05)")
+
+hits %>% 
+  mutate(odds_ratio = ifelse(!is.finite(odds_ratio),20, odds_ratio))%>% 
+  ggplot(aes(y = interpro_description, x = log2(odds_ratio), size = n_type_domain, colour = hit)) +
+  #geom_point(shape = 15) +
+  ggbeeswarm::geom_beeswarm(cex = 4)+
+  geom_vline(xintercept = c(-1.7, 0, 1.7), linetype = c(3,1,3)) +
+  #scale_colour_manual(values = mycolors) +
+  scale_size(range = c(3, 6)) +
+  labs(y = "", title = as.character(cutoff)) +
+  theme_bw(base_size = 14)
+
+```
+
+# 10. Top comppsitions
+
+```{r}
+res_mouse_brain_solubility$limma_results %>% 
+  filter(dataset == "ratio_comp_all") %>% 
+  group_by(Observed.Modifications) %>% 
+  summarise(mean_fc = mean(logFC), n_ids = n()) %>% 
+  ungroup() %>% 
+  filter(n_ids > 10) %>% 
+  mutate(mean_abs_fc = abs(mean_fc)) %>% 
+  arrange(-mean_abs_fc) %>% 
+  head(20) %>% 
+  ggplot(aes(y = forcats::fct_inorder(Observed.Modifications), x = mean_fc)) +
+  geom_bar(stat = "identity")
+```
+
+# 11. Compare to tissue
+
+```{r}
+load("results/2023-12-13_res_mouse_tissue_atlas.RData")
+
+tissue_corr_hits <- res_mouse_tissue_atlas$corr_per_site_per_mouse%>%
+  filter(tissue1 != tissue2)%>% 
+  mutate(siteID = paste0(Gene, "_", n_position)) %>%
+  drop_na() %>% 
+  group_by(siteID) %>% 
+  summarise(mean_corr = mean((value))) %>% 
+  mutate(hit =  ifelse(mean_corr > 0.6691, "corr_up", "no trend"))
+
+df_tissue_comaprison <- res_mouse_brain_solubility$solubility_ratios %>% 
+  filter(grepl("glyco", variable)) %>% 
+  left_join(res_mouse_brain_solubility$limma_results %>%  
+              distinct(Gene, Protein.ID, Modified.Peptide, n_position, Observed.Modifications, glycan_type),
+            by = join_by(Protein.ID, Modified.Peptide, Observed.Modifications)
+            ) %>% 
+  mutate(siteID = paste0(Gene, "_", n_position)) %>% 
+  inner_join(tissue_corr_hits %>%  distinct(siteID, hit), by = join_by(siteID))
+
+df_tissue_comaprison %>% 
+  ggplot(aes(x = hit, y = value)) +
+  geom_violin() +
+  geom_boxplot() +
+  labs(y = "solubility ratio", x = "tissue annotation\n(mean_corr > 0.6691)")
+
+
+df_tissue_comaprison <- res_mouse_brain_solubility$limma_results %>% 
+  filter(dataset == "ratio_comp_all") %>% 
+  mutate(siteID = paste0(Gene, "_", n_position), hit_sol = hit) %>% 
+  select(ID, siteID, hit_sol, logFC, adj.P.Val, direction) %>% 
+  inner_join(tissue_corr_hits %>%  distinct(siteID, hit), by = join_by(siteID))
+
+df_tissue_comaprison %>% 
+  ggplot(aes(x = direction, y = logFC, colour = hit)) +
+  geom_violin(pos = position_dodge(width = 0.9)) +
+  geom_boxplot(pos = position_dodge(width = 0.9)) +
+  labs(y = "logFC SPP", x = "SPP change", colour = "tissue anno\n(mean_corr > 0.6691)")
+
+df_tissue_comaprison <- res_mouse_brain_solubility$df_sd %>% 
+  ungroup() %>% 
+  mutate(siteID = paste0(Gene, "_", n_position))  %>% 
+  select(siteID,sd_solubility_ratio ) %>% 
+  inner_join(tissue_corr_hits %>%  distinct(siteID, hit), by = join_by(siteID))
+
+ df_tissue_comaprison %>% 
+  ggplot(aes(x = hit, y = sd_solubility_ratio)) +
+  geom_violin(pos = position_dodge(width = 0.9)) +
+  geom_boxplot(pos = position_dodge(width = 0.9)) +
+  labs(y = "sd SPP", x = "tissue annotation\n(mean_corr > 0.6691)") 
+  
+  
+```
+
+# Save
+
+```{r}
+save(res_mouse_brain_solubility, file = paste0("results/", Sys.Date(), "_res_mouse_brain_solubility.RData"))
+```
+
+

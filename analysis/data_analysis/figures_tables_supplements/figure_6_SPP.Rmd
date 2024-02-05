@@ -1,0 +1,252 @@
+---
+title: "Figure for gSPP data"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "/Users/burtsche/Documents/01_repos/Glycoproteomics/")
+```
+
+## Packages
+
+```{r, message=F, warning =F}
+library(tidyverse)
+library(ggplot2);theme_set(cowplot::theme_cowplot(font_size = 15))
+library("reshape2")
+library(OmnipathR)
+library(viridis)
+library(ggrepel)
+options(connectionObserver = NULL)
+library(org.Mm.eg.db)
+library(knitr)
+library(ggpubr)
+library(RColorBrewer)
+library(ReactomePA)
+library(clusterProfiler)
+library(reactome.db)
+library(ggvenn)
+library(Biostrings)
+library(limma)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+filter <- dplyr::filter
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", "#ffe300ff","#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+
+order_O <- c("O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+pal_O <- c("lightgrey",  "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", '#a65628ff',"#f781bfff")
+names(pal_O) <- c("FP", "O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+tilted <-  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1))
+blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+# Data
+
+```{r}
+load("data/paper/revision1/processed/2024-01-16_res_mouse_brain_solubility.RData")
+res_mouse_brain_solubility$solubility_ratios <- res_mouse_brain_solubility$solubility_ratios %>%  inner_join(res_mouse_brain_solubility$glyco_psm %>%  distinct(Gene, Protein.ID,Observed.Modifications, Modified.Peptide, glycan_type, n_position))
+```
+
+# A
+
+workflow
+
+# B
+
+```{r}
+res_mouse_brain_solubility$limma_results %>% 
+  filter(dataset == "ratio_comp_all" & !(glycan_type %in% c("paucimannose", "small", "phospho"))) %>% 
+   filter(Protein.ID %in% res_mouse_brain_solubility$proteins_with_insol_sub$Protein.ID) %>% 
+  mutate(glycan_type = factor(glycan_type, levels = order)) %>% 
+  ggplot(aes(x = glycan_type, y = logFC, colour = glycan_type)) +
+  geom_hline(yintercept = 0) +
+  ggforce::geom_sina(alpha = 0.3, size = 2) +
+  #geom_boxplot(colour = "grey", outlier.colour = "white", fill =NA, width = 0.3) +
+  #geom_violin(fill = NA) +
+  stat_summary(geom = "crossbar", fun = median, colour = "black") +
+  scale_colour_manual(values = pal) +
+  stat_compare_means(label = "p.signif", method = "t.test",
+                     ref.group = "high mannose")  +
+  #facet_wrap(~dataset) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1), legend.position = "none") +
+  labs(y = "log 2 fold-change\n glyco solubility-protein solubility")
+```
+
+# C 
+```{r}
+plot_data <- res_mouse_brain_solubility$solubility_ratios %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  filter(Gene == "Cdh13") %>%
+  separate(variable, into = c("replicate", "dataset")) %>%
+  dplyr::rename(ratio = value) %>%
+  mutate(
+    n_position = as.factor(n_position)
+    # colouring = ifelse(dataset == "glyco", glycan_type, "FP")
+  ) %>%
+  mutate(
+    # colouring = factor(colouring, levels = order),
+    log2_ratio = log2(ratio)
+  ) %>%
+  drop_na()
+
+prot_median <- plot_data %>%
+  filter(dataset == "FP") %>%
+  group_by(Protein.ID) %>%
+  summarise(median_ratio = median(log2_ratio))
+
+plot_data %>%
+  filter(dataset != "FP") %>%
+  group_by(Protein.ID, n_position, glycan_type, ID) %>%
+  summarise(ratio = mean(ratio), .groups = "drop") %>%
+  mutate(glycan_type = factor(glycan_type, levels = names(pal))) %>%
+  ggplot(aes(
+    x = glycan_type,
+    y = log2(ratio),
+    colour = glycan_type, fill = glycan_type,
+    label = ID
+  )) +
+  geom_hline(yintercept = c(prot_median$median_ratio), colour = c("grey")) +
+  # ggforce::geom_sina(size = 4, alpha= 0.5, shape = 21, stroke =NA) +
+  ggbeeswarm::geom_beeswarm(cex = 3, size = 3, alpha = 0.8, shape = 21, stroke = 0) +
+  scale_color_manual(values = pal) +
+  scale_fill_manual(values = pal) +
+  # lims(y = c(lower - 0.2, upper + 0.2)) +
+  labs(y = "log2(NP40/SDS)", x = "N position in protein") +
+  facet_wrap(~n_position, nrow = 1, scale = "free_x") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+  cowplot::panel_border() + 
+  labs(subtitle = "Cdh13")
+```
+
+#D
+
+```{r}
+plot_data <- res_mouse_brain_solubility$solubility_ratios %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  filter(Gene == "Thy1") %>%
+  separate(variable, into = c("replicate", "dataset")) %>%
+  dplyr::rename(ratio = value) %>%
+  mutate(
+    n_position = as.factor(n_position)
+    # colouring = ifelse(dataset == "glyco", glycan_type, "FP")
+  ) %>%
+  mutate(
+    # colouring = factor(colouring, levels = order),
+    log2_ratio = log2(ratio)
+  ) %>%
+  drop_na()
+
+prot_median <- plot_data %>%
+  filter(dataset == "FP") %>%
+  group_by(Protein.ID) %>%
+  summarise(median_ratio = median(log2_ratio))
+
+plot_data %>%
+  filter(dataset != "FP") %>%
+  group_by(Protein.ID, n_position, glycan_type, ID) %>%
+  summarise(ratio = mean(ratio), .groups = "drop") %>%
+  mutate(glycan_type = factor(glycan_type, levels = names(pal))) %>%
+  #filter(n_position == 94) %>% 
+  ggplot(aes(
+    x = glycan_type,
+    y = log2(ratio),
+    colour = glycan_type, fill = glycan_type,
+    label = ID
+  )) +
+  geom_hline(yintercept = c(prot_median$median_ratio), colour = c("grey")) +
+  # ggforce::geom_sina(size = 4, alpha= 0.5, shape = 21, stroke =NA) +
+  ggbeeswarm::geom_beeswarm(cex = 1.5, size = 3, alpha = 0.5, shape = 21, stroke = 0) +
+  scale_color_manual(values = pal) +
+  scale_fill_manual(values = pal) +
+  # lims(y = c(lower - 0.2, upper + 0.2)) +
+  labs(y = "log2(NP40/SDS)", x = "N position in protein") +
+  facet_wrap(~n_position, nrow = 1, scale = "free_x") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+  cowplot::panel_border()+ 
+  labs(subtitle = "Thy1")
+
+```
+
+```{r}
+plot_data <- res_mouse_brain_solubility$solubility_ratios %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  filter(Gene == "Cd47") %>%
+  separate(variable, into = c("replicate", "dataset")) %>%
+  dplyr::rename(ratio = value) %>%
+  mutate(
+    n_position = as.factor(n_position)
+    # colouring = ifelse(dataset == "glyco", glycan_type, "FP")
+  ) %>%
+  mutate(
+    # colouring = factor(colouring, levels = order),
+    log2_ratio = log2(ratio)
+  ) %>%
+  drop_na()
+
+prot_median <- plot_data %>%
+  filter(dataset == "FP") %>%
+  group_by(Protein.ID) %>%
+  summarise(median_ratio = median(log2_ratio))
+
+plot_data %>%
+  filter(dataset != "FP") %>%
+  group_by(Protein.ID, n_position, glycan_type, ID) %>%
+  summarise(ratio = mean(ratio), .groups = "drop") %>%
+  mutate(glycan_type = factor(glycan_type, levels = names(pal))) %>%
+  #filter(n_position == 73 | n_position == 80) %>% 
+  ggplot(aes(
+    x = glycan_type,
+    y = log2(ratio),
+    colour = glycan_type, fill = glycan_type,
+    label = ID
+  )) +
+  geom_hline(yintercept = c(prot_median$median_ratio), colour = c("grey")) +
+  # ggforce::geom_sina(size = 4, alpha= 0.5, shape = 21, stroke =NA) +
+  ggbeeswarm::geom_beeswarm(cex = 1.5, size = 3, alpha = 0.5, shape = 21, stroke = 0) +
+  scale_color_manual(values = pal) +
+  scale_fill_manual(values = pal) +
+  # lims(y = c(lower - 0.2, upper + 0.2)) +
+  labs(y = "log2(NP40/SDS)", x = "N position in protein") +
+  facet_wrap(~n_position, nrow = 1, scale = "free_x") +
+  cowplot::theme_cowplot() +
+  theme(axis.text.x = element_blank(), axis.ticks.x = element_blank()) +
+  cowplot::panel_border()+ 
+  labs(subtitle = "Cd47")
+```
+
+
+
+
+

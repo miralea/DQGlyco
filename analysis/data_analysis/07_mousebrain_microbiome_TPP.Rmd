@@ -1,0 +1,469 @@
+---
+title: "Preprocess total proteome TPP of mouse microbiome brain project"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "/Users/burtsche/Documents/01_repos/Glycoproteomics/")
+```
+
+## Packages
+
+```{r, message=F, warning =F}
+library(tidyverse)
+library(ggplot2);theme_set(cowplot::theme_cowplot(font_size = 15))
+library("reshape2")
+library(OmnipathR)
+library(viridis)
+library(ggrepel)
+options(connectionObserver = NULL)
+library(org.Mm.eg.db)
+library(knitr)
+library(ggpubr)
+library(RColorBrewer)
+library(ReactomePA)
+library(clusterProfiler)
+library(reactome.db)
+library(ggvenn)
+library(Biostrings)
+library(limma)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+filter <- dplyr::filter
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("purple4", "goldenrod", "darkgreen", "darkorange", "darkblue", "darkred", "darkcyan"), ggplot2.discrete.fill= c("purple4", "goldenrod", "darkgreen", "darkorange", "darkblue", "darkred", "darkcyan"))
+
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", "#ffe300ff","#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+
+order_O <- c("O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+pal_O <- c("lightgrey",  "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", '#a65628ff',"#f781bfff")
+names(pal_O) <- c("FP", "O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+tilted <-  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1))
+blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+# Functions
+
+```{r}
+source("~/Documents/generic_functions.R")
+```
+
+# 1. Load data and metadata
+
+```{r}
+res_fpTPP_mousebrain_microbiome <- list()
+```
+
+
+## TMT design
+
+```{r}
+res_fpTPP_mousebrain_microbiome$TMT_info <- data.frame(
+  sample = c(
+    "sample-01", "sample-02", "sample-03", "sample-04", "sample-05", "sample-06", "sample-07", "sample-08", "sample-09",
+    "sample-10", "sample-11", "sample-12", "sample-13", "sample-14", "sample-15", "sample-16", "sample-17", "sample-18"
+  ),
+  temperature = c(
+    "40.4", "44", "46.9", "49.8", "52.9", "55.5", "58.6", "62", "66.3",
+    "40.4", "44", "46.9", "49.8", "52.9", "55.5", "58.6", "62", "66.3"
+  ),
+  group = c(rep("germfree", 9), rep("community", 9)),
+  numeric_temp = rep(c(40.4, 44, 46.9, 49.8, 52.9, 55.5, 58.6, 62, 66.3), 2)
+) 
+  #filter(temperature != "40.4" & temperature != "44")
+```
+
+## TPP sets of replicates
+
+```{r}
+res_fpTPP_mousebrain_microbiome$FP_Rep1 <- tt <- read_tsv("data/TPP1_R1_FP_protein.tsv")
+colnames(res_fpTPP_mousebrain_microbiome$FP_Rep1) <- gsub(" ", "\\.", colnames(res_fpTPP_mousebrain_microbiome$FP_Rep1))
+
+res_fpTPP_mousebrain_microbiome$FP_Rep1 <-  res_fpTPP_mousebrain_microbiome$FP_Rep1 %>% 
+  filter(grepl("Mus", Organism) & !(grepl("contam", Protein))) %>% 
+  mutate(rep = "rep1")
+
+res_fpTPP_mousebrain_microbiome$FP_Rep2 <- tt <- read_tsv("data/TPP1_R2_FP_protein.tsv")
+colnames(res_fpTPP_mousebrain_microbiome$FP_Rep2 ) <- gsub(" ", "\\.", colnames(res_fpTPP_mousebrain_microbiome$FP_Rep2 ))
+
+res_fpTPP_mousebrain_microbiome$FP_Rep2 <- res_fpTPP_mousebrain_microbiome$FP_Rep2  %>% 
+  filter(grepl("Mus", Organism) & !(grepl("contam", Protein))) %>% 
+  mutate(rep = "rep2")
+
+res_fpTPP_mousebrain_microbiome$FP_Rep3 <- tt <- read_tsv("data/TPP1_R3_FP_protein.tsv")
+colnames(res_fpTPP_mousebrain_microbiome$FP_Rep3 ) <- gsub(" ", "\\.", colnames(res_fpTPP_mousebrain_microbiome$FP_Rep3 ))
+
+res_fpTPP_mousebrain_microbiome$FP_Rep3 <- res_fpTPP_mousebrain_microbiome$FP_Rep3  %>% 
+  filter(grepl("Mus", Organism) & !(grepl("contam", Protein))) %>% 
+  mutate(rep = "rep3")
+```
+
+## format
+
+```{r}
+res_fpTPP_mousebrain_microbiome$FP_anno <- bind_rows(
+  res_fpTPP_mousebrain_microbiome$FP_Rep1,
+  res_fpTPP_mousebrain_microbiome$FP_Rep2,
+  res_fpTPP_mousebrain_microbiome$FP_Rep3
+) %>%  
+  mutate(dataset = "fpTPP_mousebrain_microbiome") %>%
+  select(Gene, Protein.ID, Protein.Description, rep,  dataset, matches("sample")) %>%
+  reshape2::melt(
+    id.vars = c("Gene", "Protein.ID", "Protein.Description", "rep", "dataset"),
+    variable.name = "sample", value.name = "quant"
+  ) %>%
+  filter(!is.na(quant) & quant > 0) %>%
+  group_by(Gene, Protein.ID, Protein.Description, rep, dataset, sample) %>%
+  # aggregate intensity for peptides which were identified several times (psms)
+  summarise(quant = median(quant), .groups = "drop") %>%
+  left_join(res_fpTPP_mousebrain_microbiome$TMT_info, by = "sample") %>%
+  drop_na() %>%
+  mutate(sample = paste0(sample, "_", rep))
+```
+
+```{r}
+FP_norm <- res_fpTPP_mousebrain_microbiome$FP_anno %>%
+  dplyr::rename(replicate = rep) %>%  mutate(sample = paste0(group, "_", replicate))
+```
+
+# 2. Preprocess
+
+## Generate an internal reference sample per TMT set (= replicate)
+
+```{r}
+df_irs <- FP_norm %>% 
+  # wide to long df
+  select(Protein.ID,temperature,replicate, group, quant) %>% 
+  pivot_wider(names_from = replicate, values_from = quant) %>% 
+  drop_na() %>% 
+  melt(id.vars = c("Protein.ID", "temperature", "group"), variable.name= "replicate", value.name = "quant") %>% 
+  # calculate reference delta based on first temperature per protein
+  filter(temperature == "40.4") %>% 
+  group_by(Protein.ID) %>% 
+  mutate(delta_ref = exp(mean(log(quant)))) %>% 
+  # calculate replicate delta based on first temperature per protein and replicate
+  group_by(Protein.ID, replicate) %>% 
+  mutate(delta_rep = exp(mean(log(quant)))) %>% 
+  # calculate reference delta based on first temperature
+  mutate(gamma_rep = delta_ref/delta_rep) %>% 
+  select(Protein.ID, replicate, gamma_rep)
+```
+
+## Apply alignment of reps based on irs across all temperatures and conditions
+
+```{r}
+FP_irs <- FP_norm %>% 
+  select(Protein.ID,temperature,replicate, group, quant) %>% 
+  pivot_wider(names_from = replicate, values_from = quant) %>% 
+  drop_na() %>% 
+  melt(id.vars = c("Protein.ID", "temperature", "group"), variable.name= "replicate", value.name = "quant") %>% 
+  left_join(df_irs, by = join_by(Protein.ID, replicate), relationship = "many-to-many") %>% 
+  mutate(quant_irs = quant*gamma_rep)
+```
+
+## Do quantile normalisation for the aligned data
+
+```{r}
+FP_irs_norm <- FP_irs %>%
+  mutate(ID = Protein.ID, sample = paste0(group, "_", replicate), quant = quant_irs) %>%
+  select(ID, temperature, sample, quant) %>%
+  group_by(temperature) %>%
+  group_modify(~ tibble(normalisation_melted_ptmTPP(.))) %>%
+  ungroup() %>%
+  drop_na() %>%
+  dplyr::rename(quant_irs = quant, quant_irs_norm = quant_norm)
+
+# add gene names 
+FP_irs_norm <- FP_irs_norm %>% 
+  left_join(res_fpTPP_mousebrain_microbiome$FP_anno %>% 
+  ungroup() %>% 
+  distinct(Protein.ID, Gene), by =c("ID" = "Protein.ID"))
+
+res_fpTPP_mousebrain_microbiome$FP_irs_norm_sclaed <- 
+  FP_irs_norm %>% 
+  group_by(Gene, sample) %>% 
+  mutate(quant_scaled = quant_irs/quant_irs[temperature == 40.4])
+```
+
+### Check
+
+```{r}
+# before normalisation
+FP_irs_norm %>% 
+  ggplot(aes(temperature, y = log2(quant_irs), colour = sample)) +
+  geom_boxplot()
+
+# after normalisation
+FP_irs_norm %>% 
+  ggplot(aes(temperature, y = log2(quant_irs_norm), colour = sample)) +
+  geom_boxplot()
+```
+
+#3. Hit calling with GPmelt
+
+by cecile
+
+```{r, eval = F}
+save(FP_norm, FP_irs_norm, FP_irs, df_irs, int, file = "2023-11-22_files_for_CS.RData")
+```
+
+## results
+
+```{r}
+res_fpTPP_mousebrain_microbiome$res_GPmelt_df <- read_csv("data/pValues_ABC.csv") %>% 
+  rename(Protein.ID = Level_1) %>% 
+  left_join(res_fpTPP_mousebrain_microbiome$FP_Rep1  %>%  distinct(Protein.ID, Gene))
+```
+
+# 4. Analysis
+
+## enzymes
+
+```{r}
+hits <- res_fpTPP_mousebrain_microbiome$res_GPmelt_df %>% 
+  filter(BHadjustpVal < 0.01)
+
+
+enzymes <- data.frame(Gene = c("FUT1","FUT3","FUT4", "FUT6","FUT2","FUT5","FUT7","FUT11","FUT10","LFNG","FUT8","POFUT1","FUT9","ST8SIA5","ST8SIA3","ST6GAL1","ST8SIA6","ST3GAL1","ST3GAL3","ST3GAL4","ST3GAL2","ST6GALNAC3","ST8SIA1","ST8SIA2","ST8SIA4","ST6GALNAC6","ST6GAL2","ST6GALNAC5","ST6GALNAC4","ST6GALNAC1","ST6GALNAC2","ST3GAL5","ST3GAL6"))
+hits %>%  filter(toupper(Gene) %in% enzymes$Gene)
+
+glygen_transferases <- 
+  bind_rows(
+    "human" = read_csv("~/Documents/07_uniprot/human_protein_glycosyltransferase.csv") %>% 
+  mutate(Protein.ID = str_remove(uniprotkb_canonical_ac, "-\\d+")),
+  "mouse" = read_csv("~/Documents/07_uniprot/mouse_protein_glycosyltransferase.csv") %>% 
+  mutate(Protein.ID = str_remove(uniprotkb_canonical_ac, "-\\d+")),
+  .id = "species"
+  ) %>% 
+  distinct(species, Protein.ID, Gene = gene_symbol)
+
+glygen_hydrolases <- 
+  bind_rows(
+  "human" = read_csv("~/Documents/07_uniprot/human_protein_glycohydrolase.csv") %>% 
+  mutate(Protein.ID = str_remove(uniprotkb_canonical_ac, "-\\d+")),
+  "mouse" = read_csv("~/Documents/07_uniprot/mouse_protein_glycohydrolase.csv") %>% 
+  mutate(Protein.ID = str_remove(uniprotkb_canonical_ac, "-\\d+")),
+  .id = "species"
+  ) %>% 
+  distinct(species, Protein.ID, Gene = gene_symbol)
+
+hits %>%  filter(Protein.ID %in% glygen_transferases$Protein.ID)
+hits %>%  filter(Protein.ID %in% glygen_hydrolases$Protein.ID)
+
+```
+
+## enrichment
+
+```{r}
+library(STRINGdb)
+string_db <- STRINGdb$new( version="11.5", species=10090,
+                           score_threshold=200, network_type="full", input_directory="")
+
+example1_mapped <- res_fpTPP_mousebrain_microbiome$res_GPmelt_df  %>%  ungroup()  %>%  distinct(Gene) %>% as.data.frame()
+example1_mapped <- string_db$map(example1_mapped, "Gene", removeUnmappedRows = TRUE )
+
+string_db <- STRINGdb$new( version="11.5", species=10090,
+                           score_threshold=200, network_type="full", input_directory="",
+                           backgroundV =  unique(example1_mapped$STRING_id))
+```
+
+```{r}
+hits <- res_fpTPP_mousebrain_microbiome$res_GPmelt_df %>% 
+  filter(BHadjustpVal < 0.01)
+
+res_fpTPP_mousebrain_microbiome$TPP_enrichment <-  hits %>%
+  filter(toupper(Gene) %in% example1_mapped$Gene) %>% 
+  drop_na() %>% 
+  distinct(Gene) %>% 
+  mutate(tmp = "dummy")%>% 
+  group_by(tmp) %>% 
+  nest() %>% 
+  mutate(ER = map(data, function(df) {
+    ER = string_db$get_enrichment(df$Gene)
+    if(nrow(ER) >0){
+       ER = as.data.frame(ER)
+    } else {
+      ER = data.frame(category = "dummy")
+    }
+  })) %>%
+  select(-data) %>%
+  unnest(cols = c(ER))
+
+int <- c("Dynamin central domain", "Myosin II complex",  "Tubulin", "Axon guidance", "Structural constituent of cytoskeleton","Tight junction", "Recycling pathway of L1", "Gap junction trafficking", "Structural molecule activity")
+int <- c("Axon guidance", "Structural constituent of cytoskeleton","Myelin sheath","RHO GTPases activate IQGAPs", "Tight junction", "Recycling pathway of L1",  "Structural molecule activity")
+
+
+res_fpTPP_mousebrain_microbiome$TPP_enrichment  %>%  
+  filter(description %in% int & category != "COMPARTMENTS") %>% 
+  mutate(description = factor(description, levels = int)) %>% 
+  ggplot(aes(y = description, x = -log10(fdr), size =number_of_genes)) +
+  geom_vline(xintercept = -log10(0.01), linetype = 3) +
+  geom_point(colour = "#C11555") +
+  scale_size(range = c(3, 10)) +
+  theme(panel.grid.major.y = element_line(colour = "lightgrey"))
+
+```
+
+
+## calculate abundance score from first two temperatures
+
+```{r}
+res_fpTPP_mousebrain_microbiome$abund_scores <- tt <-
+  res_fpTPP_mousebrain_microbiome$FP_irs_norm_sclaed %>% 
+  select(-quant_irs, -quant_scaled) %>% 
+  separate(sample, into = c("group", "rep")) %>% 
+  mutate(quant_irs_norm = as.numeric(quant_irs_norm)) %>% 
+  distinct(temperature, ID, Gene, rep, group, quant_irs_norm) %>% 
+  reshape2::dcast(temperature + ID + Gene + rep ~ group, value.var = "quant_irs_norm") %>% 
+  drop_na() %>% 
+  mutate(log2FC = (log2(as.numeric(community))-log2(as.numeric(germfree)))) %>% 
+  filter(temperature %in% c("40.4", "44"))%>% 
+  group_by(rep, ID) %>% 
+  summarise(abun_score = mean(log2FC)) %>% 
+  mutate(group = "community")
+
+res_fpTPP_mousebrain_microbiome$FP_corrected <- tt <-
+  res_fpTPP_mousebrain_microbiome$FP_irs_norm_sclaed %>% 
+  select(-quant_irs, -quant_scaled) %>% 
+  separate(sample, into = c("group", "rep")) %>% 
+  mutate(quant_irs_norm = as.numeric(quant_irs_norm)) %>% 
+  distinct(temperature, ID, Gene, rep, group, quant_irs_norm)  %>% 
+  left_join(res_fpTPP_mousebrain_microbiome$abund_scores, by =c("ID", "rep", "group")) %>% 
+  # set abun score realtive to germfree
+  mutate(abun_score = ifelse(group == "community", abun_score, 0))%>% 
+  mutate(quant_corrected = log2(quant_irs_norm) - abun_score)
+
+```
+
+## AUCs
+
+```{r}
+res_fpTPP_mousebrain_microbiome$AUCs <- res_fpTPP_mousebrain_microbiome$FP_corrected %>% 
+  group_by(rep, Gene, ID, group) %>% 
+  summarise(sum_curves = sum(quant_corrected)) %>% 
+  ungroup() %>% 
+  pivot_wider(names_from = group, values_from = sum_curves) %>% 
+  mutate(AUC = community-germfree) %>% 
+  group_by(Gene, ID) %>% 
+  summarise(mean_AUC = mean(AUC)) %>% 
+  mutate(absAUC = abs(mean_AUC))
+```
+
+## Comparison to microbiome
+
+```{r}
+load("results/2024-01-24_res_microbiome_mousebrain_Nglyco.RData")
+
+hits <- res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(dataset == "glyco" & hit == "hit") %>% 
+  ungroup() %>% 
+  distinct(Gene) %>% 
+  filter(Gene %in% res_fpTPP_mousebrain_microbiome$AUCs$Gene)
+
+no_hits <- res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(dataset == "glyco") %>% 
+  distinct(Gene) %>% 
+  filter(Gene %in% res_fpTPP_mousebrain_microbiome$AUCs$Gene & !(Gene %in% hits$Gene))
+
+library(org.Mm.eg.db)
+#GO:0015630 microtub cy
+# 0007010
+cytoskeleton <- AnnotationDbi::select(org.Mm.eg.db, keytype="GOALL", keys=c("GO:0005198"), columns="UNIPROT")
+
+res_fpTPP_mousebrain_microbiome$AUCs %>% 
+  filter(absAUC < 5) %>% 
+  mutate(anno= ifelse(Gene %in% hits$Gene, "microbiome\nhit", "other"),
+          anno= ifelse(Gene %in% no_hits$Gene, "microbiome\nno hit", anno),
+         anno= ifelse(ID %in% cytoskeleton$UNIPROT, "structural\nmolecule\nactivity", anno)) %>% 
+  mutate(anno = factor(anno,levels = c("microbiome\nhit", "microbiome\nno hit", "other",  "structural\nmolecule\nactivity"))) %>% 
+  ggplot(aes(x = anno, y = mean_AUC)) +
+  geom_hline(yintercept = 0) +
+  ggforce::geom_sina(size = 3, alpha = 0.3, stroke = NA, colour = "grey") +
+    stat_summary(aes(anno),fun = median, geom = "crossbar",
+               position = position_dodge(0.9), colour = "black") +
+  stat_compare_means(comparisons = list( c("microbiome\nno hit", "microbiome\nhit"),c("microbiome\nno hit", "other"), c("microbiome\nhit", "other"), c("structural\nmolecule\nactivity", "other")), label = "p.signif") +
+  theme(legend.position = "none")+
+  labs(y = "deltaAUC community-germfree\n(zoomed in)", x = "")
+```
+
+## examples
+
+```{r}
+res_fpTPP_mousebrain_microbiome$FP_irs_norm_sclaed %>%
+  #filter(grepl("Dnm1$|Dnm2|Dnm3", Gene)) %>% 
+  #filter(grepl("Myl6$|Myl4|Myl12b", Gene)) %>% 
+  #filter(grepl("Myh10|Myh11|Myh9", Gene)) %>% 
+  #filter(grepl("Actb$|Acta2$|Actg1$", Gene)) %>% 
+  filter(grepl("Tuba1b$|Tuba4a|Tuba8|Tubal3|Tubb1|Tubb2a|Tubb2b|Tubb3|Tubb4a|Tubb4b|Tubb5|Tubb6|Tubg1|Tubg2|Actb$|Acta2$|Actg1$|Myh10|Myh11|Myh9$|Myl12b|Dnm1$|Dnm2|Dnm3", Gene)) %>% 
+  mutate(tmp = ifelse(grepl("Tuba", Gene), "Tub alpha", "Tub gamma"),
+         tmp = ifelse(grepl("Tubb", Gene), "Tub beta", tmp),
+         tmp = ifelse(grepl("Actb$|Acta2$|Actg1$", Gene), "Actins", tmp),
+          tmp = ifelse(grepl("Myh10|Myh11|Myh9|Myl12b", Gene), "Myosins", tmp),
+          tmp = ifelse(grepl("Dnm1$|Dnm2|Dnm3", Gene), "Dyneins", tmp)) %>% 
+  separate(sample, into = c("group", "replicate"), sep = "_") %>% 
+    ggplot(aes(x = as.numeric(temperature), 
+               y = quant_scaled, 
+               colour = group,
+               fill =group,
+               #shape = tmp, 
+               group = paste(Gene, group))) +
+  geom_hline(yintercept = 1, linetype =3) +
+    geom_point(size = 0.5) +
+    geom_smooth(size = 0.5,  method = 'loess', formula = 'y ~ x', se = T, alpha = 0.2) +
+  scale_colour_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555")) +
+   scale_fill_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555")) +
+  facet_wrap(~tmp) +
+  cowplot::panel_border() +
+  labs(x = "temperature (C)", y = "soluble fraction")
+```
+
+```{r}
+res_fpTPP_mousebrain_microbiome$FP_irs_norm_sclaed %>%
+  filter(Gene == "Cntnap1") %>% 
+  separate(sample, into = c("group", "replicate"), sep = "_") %>% 
+    ggplot(aes(x = as.numeric(temperature), 
+               y = quant_scaled, 
+               colour = group, fill = group, shape = replicate, group = paste(replicate, group))) +
+  geom_hline(yintercept = c(1), linetype = 3) +
+    geom_point() +
+    #geom_line() +
+    geom_smooth(alpha = 0.2,  method = 'loess', formula = 'y ~ x') +
+    scale_colour_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555")) +
+   scale_fill_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555")) +
+  labs(x = "temperature (C)", y = "soluble fraction", subtitle = "Cntnap1")
+
+```
+
+# 5. Save
+
+```{r}
+save(res_fpTPP_mousebrain_microbiome, file = paste0("results/", Sys.Date(), "_res_microbiome_mousebrain_FPTPP.RData"))
+```
+

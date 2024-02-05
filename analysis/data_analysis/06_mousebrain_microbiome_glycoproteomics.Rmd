@@ -1,0 +1,1127 @@
+---
+title: "Glycoproteomics - quantitative comparison microbiome mouse brain project with three conditions"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: inline
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "/Users/burtsche/Documents/01_repos/Glycoproteomics/")
+```
+
+
+## Packages
+
+```{r, message=F, warning =F, include=F}
+library(tidyverse)
+library(ggplot2); theme_set(cowplot::theme_cowplot())
+library("reshape2")
+library(ggrepel)
+options(connectionObserver = NULL)
+library(org.Mm.eg.db)
+library(knitr)
+library(ggpubr)
+library(RColorBrewer)
+library(ReactomePA)
+library(clusterProfiler)
+library(reactome.db)
+library(ggvenn)
+library(ComplexHeatmap)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+filter <- dplyr::filter
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", "#ffe300ff","#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+
+order_O <- c("O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+pal_O <- c("lightgrey",  "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", '#a65628ff',"#f781bfff")
+names(pal_O) <- c("FP", "O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+tilted <-  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1))
+blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+## Functions
+
+```{r}
+source("~/Documents/generic_functions.R")
+```
+
+# 1. Glyco data
+
+```{r}
+# glyco psm
+#load("data/paper/top_runs/20230301_microbiome_mousebrain_Nglyco_psm_processed.RData")
+res_microbiome_mousebrain_Nglyco <-  glyco_psm_processing(path = "data/brain/Mouse_brain_GF_Mono_8c_glyco_1protpergene_psm.tsv",dataset = "TMT_microbiome_mousebrain_Nglyco", species = "microbiome_mouse\nbrain_Nglyco")
+```
+
+## TMT anno
+
+Build info for each TMT channel
+
+```{r}
+res_microbiome_mousebrain_Nglyco$TMT_info_glyco <- data.frame(
+  sample = c(
+    "sample01", "sample02", "sample03",
+    "sample04", "sample05", "sample06",
+    "sample07", "sample08", "sample09",
+    "sample10", "sample11", "sample12",
+    "sample13", "sample14", "sample15", 
+    "sample16", "sample17", "sample18"
+  ),
+  microbiome = c(
+    "germfree", "germfree", "germfree",
+    "germfree", "germfree", "germfree",
+    "monocolonized", "monocolonized", "monocolonized",
+    "monocolonized", "monocolonized", "monocolonized",
+    "community", "community", "community",
+    "community", "community", "community"
+  ),
+  sex = c(
+    "male", "female", "female",
+    "male", "male", "female",
+    "male", "male", "male",
+    "female", "female", "female",
+    "male", "male", "male",
+    "female", "female", "female"
+  ),
+  replicate = c(
+    "rep1","rep2","rep3",
+    "rep4","rep5","rep6",
+    "rep1","rep2","rep3",
+    "rep4","rep5","rep6",
+    "rep1","rep2","rep3",
+    "rep4","rep5","rep6"
+  )
+)
+```
+
+## Normalisation
+
+basic formatting. Get relevant columns and normalise using normalisation_melted_glyco()
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm_anno <- res_microbiome_mousebrain_Nglyco$psm %>% 
+  # filter for glycopeptides
+  filter(grepl("\\d+N", Assigned.Modifications)) %>% 
+  select(Peptide, Protein.ID,Protein.Start,n_position, matches("Sample") , `Modified.Peptide`, Gene, Assigned.Modifications, Observed.Modifications, glycan_type) %>% 
+  melt(id.vars = c("Peptide", "Protein.ID","Protein.Start", "n_position", "Modified.Peptide", 'Gene', "Assigned.Modifications", "Observed.Modifications", "glycan_type"),
+       variable.name = "sample", 
+       value.name = "quant")%>% 
+  left_join(res_microbiome_mousebrain_Nglyco$TMT_info_glyco, by = "sample") %>% 
+  filter(!is.na(sex)) %>% 
+  mutate(ID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications)) %>% 
+  #group_by(condition) %>% 
+  group_modify(~tibble(normalisation_melted_ptm(.)))%>% 
+  mutate(glycosylation = as.character(str_extract_all(Assigned.Modifications,"\\d+N")),
+         glyco_position= n_position,
+         condition = paste0(microbiome, "_", sex))
+```
+
+```{r}
+# number of proteins with glycopeptides
+length(unique(res_microbiome_mousebrain_Nglyco$psm_anno$Protein.ID))
+```
+
+
+## Check normalization
+
+```{r}
+ggplot(res_microbiome_mousebrain_Nglyco$psm_anno, aes(y = log2(quant), x =  sample, colour = sex)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle =  45, hjust =1, vjust=1)) +
+  facet_wrap(~microbiome, scales = "free")
+
+ggplot(res_microbiome_mousebrain_Nglyco$psm_anno, aes(y = quant_norm, x = paste0(sex, "_", replicate), colour = microbiome)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust =1)) +
+  facet_wrap(~microbiome, scales = "free_x") +
+  labs(x = "", title = "Glycoproteome")
+```
+
+
+## Numbers
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm_anno %>% 
+  mutate(siteID = paste0(Protein.ID, "_", glyco_position)) %>% 
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(ID),
+    n_glycosites = n_distinct(siteID)
+  ) %>% 
+  melt()
+```
+
+## Correlations
+
+of raw intensities, with complex heatmap
+
+```{r}
+
+m <- res_microbiome_mousebrain_Nglyco$psm %>%
+    select(matches(res_microbiome_mousebrain_Nglyco$TMT_info_glyco$sample)) %>%
+    setNames(paste0(res_microbiome_mousebrain_Nglyco$TMT_info_glyco$microbiome, "_", res_microbiome_mousebrain_Nglyco$TMT_info_glyco$replicate))
+
+m[m == 0] <- NA
+m <- drop_na(m)
+
+
+ComplexHeatmap::Heatmap(m %>% cor(m, method = "spearman"),
+  # res_microbiome_mousebrain_Nglyco$psm %>%
+  #   select(matches(res_microbiome_mousebrain_Nglyco$TMT_info_glyco$sample)) %>%
+  #   setNames(paste0(res_microbiome_mousebrain_Nglyco$TMT_info_glyco$microbiome, "_", res_microbiome_mousebrain_Nglyco$TMT_info_glyco$replicate)) %>%
+  #   cor(method = "spearman"),
+  col = corrplot::COL1("Reds"),
+  # cluster_columns = F,
+  show_column_names = FALSE,
+  show_column_dend = F,
+  show_row_dend = F,
+  show_row_names = F,
+  rect_gp = gpar(col = "white"),
+  right_annotation = row_anno <- HeatmapAnnotation(
+  "microbiome" = res_microbiome_mousebrain_Nglyco$TMT_info_glyco$microbiome,
+  "sex" = res_microbiome_mousebrain_Nglyco$TMT_info_glyco$sex,
+  col = list(
+    microbiome = c("germfree" = "#7D9FC5", "community" = "#C11555", "monocolonized" = "darkseagreen"),
+    sex = c("male" = "#E1BE6A", "female" = "#40B0A6")
+  ),
+  which = "row",
+  show_annotation_name = FALSE
+), 
+name = "corr"
+)
+```
+
+```{r}
+
+GGscatterhex <- function(data, mapping,...) {
+  x <- GGally::eval_data_col(data, mapping$x)
+  y <- GGally::eval_data_col(data, mapping$y)
+  df <- data.frame(x = x, y = y)
+  pp <- ggplot(df, aes(x=x, y=y)) +
+        geom_hex()
+  return(pp)
+  }
+
+GGally::ggpairs(log10(m), 
+                columns = c(1:18),
+                upper = list(continuous = GGally::wrap("cor", method = "spearman", size = 2)),
+                lower = list(continuous = GGally::wrap(GGscatterhex))) +
+  cowplot::theme_cowplot(9)
+```
+
+```{r}
+m %>%  
+  cor(method = "spearman") %>% 
+  melt()%>%
+  left_join(res_microbiome_mousebrain_Nglyco$TMT_info_glyco %>% mutate(Var1 = paste0(microbiome, "_", replicate)) %>%  distinct(`Var1`, `sex`)) %>% 
+  mutate(sex1= sex) %>% 
+  select(-sex)%>%
+  left_join(res_microbiome_mousebrain_Nglyco$TMT_info_glyco %>% mutate(Var2 = paste0(microbiome, "_", replicate)) %>%  distinct(`Var2`, `sex`)) %>% 
+  mutate(sex2= sex) %>% 
+  select(-sex) %>% 
+  mutate(Var1 = str_replace(Var1, "_rep\\d", ""),
+         Var2 = str_replace(Var2, "_rep\\d", "")) %>% 
+  filter(Var1 == Var2 & sex1==sex2) %>% 
+  distinct(Var1, sex1, value) %>% 
+  group_by(Var1, sex1) %>% 
+  summarise(mean_corr = mean(value), min_corr = min(value))
+```
+
+
+
+# 2. Full proteome data
+
+
+For full proteome, start from protein.tsv output from MSFragger
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm_FP <- read_tsv("data/brain/Glyco_mousebrain_threeconditions_FP_protein_1protpergene.tsv")
+colnames(res_microbiome_mousebrain_Nglyco$psm_FP) <- gsub(" ", "\\.", colnames(res_microbiome_mousebrain_Nglyco$psm_FP))
+```
+
+The TMT columns have ALWAYS a different name, extremly annoying. Hard overwriting here, but I dont want to rewrite everything
+
+```{r}
+colnames(res_microbiome_mousebrain_Nglyco$psm_FP)[24:41] <-c(
+    "sample01", "sample02", "sample03",
+    "sample04", "sample05", "sample06",
+    "sample07", "sample08", "sample09",
+    "sample10", "sample11", "sample12",
+    "sample13", "sample14", "sample15", 
+    "sample16", "sample17", "sample18"
+  )
+
+colnames(res_microbiome_mousebrain_Nglyco$psm_FP)
+```
+
+## remove contaminants
+
+Some proteins which are not Mus musculus
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm_FP <- res_microbiome_mousebrain_Nglyco$psm_FP %>% 
+  filter(grepl("Mus musculus", Organism))
+```
+
+## TMT anno
+
+Build info for each TMT channel
+
+```{r}
+res_microbiome_mousebrain_Nglyco$TMT_info_FP <- data.frame(
+sample = c(
+    "sample01", "sample02", "sample03",
+    "sample04", "sample05", "sample06",
+    "sample07", "sample08", "sample09",
+    "sample10", "sample11", "sample12",
+    "sample13", "sample14", "sample15", 
+    "sample16", "sample17", "sample18"
+  ),
+  microbiome = c(
+    "germfree", "germfree", "germfree",
+    "germfree", "germfree", "germfree",
+    "monocolonized", "monocolonized", "monocolonized",
+    "monocolonized", "monocolonized", "monocolonized",
+    "community", "community", "community",
+    "community", "community", "community"
+  ),
+  sex = c(
+    "male", "female", "female",
+    "male", "male", "female",
+    "male", "male", "male",
+    "female", "female", "female",
+    "male", "male", "male",
+    "female", "female", "female"
+  ),
+  replicate = c(
+    "rep1","rep2","rep3",
+    "rep4","rep5","rep6",
+    "rep1","rep2","rep3",
+    "rep4","rep5","rep6",
+    "rep1","rep2","rep3",
+    "rep4","rep5","rep6"
+  )
+)
+```
+
+## Normalisation
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm_FP_anno <- res_microbiome_mousebrain_Nglyco$psm_FP %>% 
+  select(`Protein.ID`, Gene, matches(res_microbiome_mousebrain_Nglyco$TMT_info_FP$sample)) %>% 
+  melt(variable.name = "sample", value.name = "quant") %>% 
+  left_join(res_microbiome_mousebrain_Nglyco$TMT_info_FP, by = c("sample")) %>% 
+  filter(!is.na(sex) & quant > 0 & is.finite(quant))%>% 
+  mutate(dummy = "dummy", ID = Protein.ID) %>% 
+  group_by(dummy) %>% 
+  group_modify(~tibble(normalisation_melted_ptm(.))) %>% 
+  ungroup() %>% 
+  select(-dummy) %>% 
+  mutate(condition = paste0(microbiome, "_", sex)) %>% 
+  filter(!is.na(quant) & !is.na(quant_norm))
+```
+
+## Check normalization
+
+```{r}
+ggplot(res_microbiome_mousebrain_Nglyco$psm_FP_anno, aes(y = log2(quant), x = sample, colour = sex)) +
+  geom_boxplot() +
+  facet_wrap(~microbiome, scales = "free_x")
+
+ggplot(res_microbiome_mousebrain_Nglyco$psm_FP_anno, aes(y = quant_norm, x = paste0(sex, "_", replicate), colour = microbiome)) +
+  geom_boxplot() +
+  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust =1)) +
+  facet_wrap(~microbiome, scales = "free_x") +
+  labs(x = "", title = "Full proteome")
+
+```
+
+## correlations
+
+```{r}
+ComplexHeatmap::Heatmap(
+  res_microbiome_mousebrain_Nglyco$psm_FP %>%
+    select(Protein.ID, matches(res_microbiome_mousebrain_Nglyco$TMT_info_FP$sample)) %>%
+    group_by(Protein.ID) %>%
+    summarise(across(everything(), list(sum))) %>%
+    select(-Protein.ID) %>%
+    setNames(paste0(res_microbiome_mousebrain_Nglyco$TMT_info_FP$microbiome, "_", res_microbiome_mousebrain_Nglyco$TMT_info_FP$replicate)) %>%
+    cor(method = "spearman"),
+  col = corrplot::COL1("Reds"),
+  cluster_columns = F,
+  cluster_rows = F,
+  show_column_names = FALSE,
+  show_column_dend = F,
+  show_row_dend = F,
+  show_row_names = F,
+  rect_gp = gpar(col = "white"),
+  right_annotation = HeatmapAnnotation(
+  "microbiome" = res_microbiome_mousebrain_Nglyco$TMT_info_FP$microbiome,
+  "sex" = res_microbiome_mousebrain_Nglyco$TMT_info_FP$sex,
+  col = list(
+    microbiome = c("germfree" = "#7D9FC5", "community" = "#C11555", "monocolonized" = "darkseagreen"),
+    sex = c("male" = "#E1BE6A", "female" = "#40B0A6")
+  ),
+  which = "row",
+  show_annotation_name = FALSE
+), 
+name = "corr"
+)
+```
+
+# 3. Correct data: Fit lm
+
+## Combine glyco and total
+
+```{r}
+length(unique(res_microbiome_mousebrain_Nglyco$psm_anno$Protein.ID))
+length(unique(res_microbiome_mousebrain_Nglyco$psm_FP_anno$Protein.ID))
+
+length(intersect(unique(res_microbiome_mousebrain_Nglyco$psm_anno$Protein.ID), unique(res_microbiome_mousebrain_Nglyco$psm_FP_anno$Protein.ID)))
+```
+
+
+```{r}
+data_fit <- res_microbiome_mousebrain_Nglyco$psm_anno %>%
+  # format glyco data
+  filter(quant_norm >0) %>% 
+  # mutate(value = log2(quant_norm)) %>% 
+  # remove psm duplicates which arise from normalisation
+  distinct(ID,sample, quant_norm, .keep_all = T) %>% 
+  dplyr::select(Protein.ID, glycoID = ID, sample, glyco_intensity = quant_norm)%>%
+  # add FP data
+  inner_join(res_microbiome_mousebrain_Nglyco$psm_FP_anno %>%
+               filter(quant_norm >0) %>% 
+               # mutate(value = log2(quant_norm)) %>% 
+    dplyr::select(Protein.ID, sample, total_intensity = quant_norm), by = c("sample", "Protein.ID"))
+```
+
+## Fit individual lm per glycopeptide
+
+```{r}
+data_lm <- data_fit %>%
+  filter(!is.na(glyco_intensity), !is.na(total_intensity)) %>%
+  nest(data = c(sample, glyco_intensity, total_intensity)) %>%
+  mutate(fit = purrr::map(data, function(df) lm(glyco_intensity ~ total_intensity, data = df)))
+
+data_lm <- data_lm %>%
+  mutate(model = purrr::map(fit, broom::tidy))
+
+data_lm <- data_lm %>%
+  mutate(glyco_pred = map(fit, predict))
+
+data_lm <- data_lm %>%
+  dplyr::select(-fit) %>%
+  unnest(c(data, glyco_pred))
+
+data_lm <- data_lm %>%
+  dplyr::select(-model) %>%
+  mutate(cleaned_glycosignal = glyco_intensity - glyco_pred)
+```
+
+### Comparison corrected to not corrected
+
+```{r}
+data_cor <- data_fit %>%
+  filter(!is.na(glyco_intensity), !is.na(total_intensity)) %>%
+  group_by(Protein.ID, glycoID) %>%
+  summarise(cor_intensity = cor(glyco_intensity, total_intensity)) %>%
+  ungroup()
+
+data_cor_after <- data_lm %>%
+  ungroup() %>%
+  filter(!is.na(cleaned_glycosignal), !is.na(total_intensity)) %>%
+  group_by(glycoID) %>%
+  summarise(cor_intensity = cor(cleaned_glycosignal, total_intensity)) %>%
+  ungroup()
+
+ggplot(data_cor_after, aes(x = cor_intensity)) +
+  geom_histogram(aes(y = ..density..), alpha = 0.3, colour = "gray") +
+  geom_density(colour = "maroon") +
+  scale_x_continuous(limits = c(-0.1, 0.1)) +
+  theme_bw(base_size = 16) +
+  labs(x = "R2 corrected glycoproteome vs total proteome", title = "Correlation after")
+
+ggplot(data_cor, aes(x = cor_intensity)) +
+  geom_histogram(aes(y = ..density..), alpha = 0.3, colour = "gray") +
+  geom_density(colour = "maroon") +
+  theme_bw(base_size = 16) +
+  labs(x = "R2 glycoproteome vs total proteome", title = "Correlation before")
+
+rm(data_cor, data_cor_after)
+
+```
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm_anno <- data_lm %>%
+  left_join(res_microbiome_mousebrain_Nglyco$psm_anno, by = c("glycoID" = "ID", "sample", "Protein.ID"))
+  
+```
+
+```{r}
+rm(data_fit, data_lm)
+```
+
+# 4. PCA
+
+## glyco
+
+```{r}
+# m <- acast(psm_glyco_brains_anno_corrected, sample ~ glycoID, value.var = "cleaned_glycosignal", fun.aggregate = median, fill = 0)
+# m[is.na(m)] <- 0
+m <- acast(res_microbiome_mousebrain_Nglyco$psm_anno, glycoID ~ sample, value.var = "cleaned_glycosignal", fill = 0, fun.aggregate = median)
+m[m== 0] <- NA
+m <- m %>% 
+  as.data.frame() %>% 
+  drop_na()%>% 
+  as.matrix()%>% 
+  t()
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  left_join(res_microbiome_mousebrain_Nglyco$TMT_info_glyco) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = microbiome, shape = sex)) +
+  geom_point(size = 3) +
+  scale_colour_manual(values  = c("germfree" = "#7D9FC5", "community" = "#C11555",  "monocolonized" = "darkseagreen")) +
+  scale_shape_manual(values = c(15, 17)) +
+  labs(title = "Glycoproteome", 
+       subtitle = "normalized and corrected", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+
+rm(m, pca_rotation)
+```
+
+## full proteome
+
+```{r}
+m <- dcast(res_microbiome_mousebrain_Nglyco$psm_FP_anno, Protein.ID ~ sample, value.var = "quant_norm", fill = NA) %>% 
+  drop_na()%>% 
+  column_to_rownames("Protein.ID") %>% 
+  as.matrix() %>% 
+  t()
+
+pca <- prcomp(m)
+plot(pca)
+
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  left_join(res_microbiome_mousebrain_Nglyco$TMT_info_FP) %>%
+  ggplot(aes(x = round(PC1), y = PC2, colour = microbiome, shape = sex)) +
+  geom_point(size = 3) +
+  scale_colour_manual(values  = c("germfree" = "#7D9FC5", "community" = "#C11555", "monocolonized" = "darkseagreen")) +
+  scale_shape_manual(values = c(15, 17)) +
+  labs(title = "Proteome", 
+       subtitle = "normalized", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+rm(m, pca_rotation)
+```
+
+
+# 5. Limma
+
+```{r}
+res_microbiome_mousebrain_Nglyco$eset_glyco <- tt <-
+  res_microbiome_mousebrain_Nglyco$psm_anno %>%
+  acast(glycoID ~ microbiome+sex+replicate, value.var = "cleaned_glycosignal", fill = NaN)
+res_microbiome_mousebrain_Nglyco$eset_glyco <- tt <- res_microbiome_mousebrain_Nglyco$eset_glyco[complete.cases(res_microbiome_mousebrain_Nglyco$eset_glyco), ]
+boxplot(res_microbiome_mousebrain_Nglyco$eset_glyco)
+
+res_microbiome_mousebrain_Nglyco$eset_FP <- tt <-  
+  res_microbiome_mousebrain_Nglyco$psm_FP_anno  %>% 
+   acast(Protein.ID ~ microbiome+sex+replicate, value.var = "quant_norm", fill = NaN) 
+res_microbiome_mousebrain_Nglyco$eset_FP <- tt <- res_microbiome_mousebrain_Nglyco$eset_FP[complete.cases(res_microbiome_mousebrain_Nglyco$eset_FP),]
+boxplot(res_microbiome_mousebrain_Nglyco$eset_FP )
+
+```
+
+```{r}
+m_ <- str_extract(colnames(res_microbiome_mousebrain_Nglyco$eset_glyco), "community|monocolonized|germfree")
+s_ <- str_extract(colnames(res_microbiome_mousebrain_Nglyco$eset_glyco), "male|female")
+r_ <- str_extract(colnames(res_microbiome_mousebrain_Nglyco$eset_glyco), "rep\\d")
+
+design_matrix <- model.matrix(~ 0+ m_ + r_ )
+design_matrix
+
+contr <- cbind("community-germfree" = c(1,-1,0,0,0,0,0,0),
+               "monocolonized-germfree" = c(0,-1,1,0,0,0,0,0),
+               "community-monocolonized" = c(1,0,-1,0,0,0,0,0))
+
+
+fit_glyco <- limma::lmFit(res_microbiome_mousebrain_Nglyco$eset_glyco, design_matrix)
+fit_glyco <- limma::contrasts.fit(fit_glyco, contr)
+fit_glyco <- limma::eBayes(fit_glyco)
+
+fit_FP <- limma::lmFit(res_microbiome_mousebrain_Nglyco$eset_FP, design_matrix)
+fit_FP <- limma::contrasts.fit(fit_FP, contr)
+fit_FP <- limma::eBayes(fit_FP)
+```
+
+```{r}
+mapping <- res_microbiome_mousebrain_Nglyco$psm %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  distinct(Protein.ID, Gene, ID, n_position, glycan_type, Protein.Description) %>%
+  bind_rows(res_microbiome_mousebrain_Nglyco$psm_FP %>%
+    distinct(Protein.ID, Gene, Protein.Description) %>%
+    mutate(ID = Protein.ID)) %>%
+  distinct(Protein.ID, Gene, ID, n_position, glycan_type, Protein.Description) %>% 
+  mutate(n_position = as.character(n_position)) %>% 
+  separate(ID, into = c("Protein.ID", "Modified.Peptide", "Observed.Modifications"), sep = "_", remove = F)
+
+res_microbiome_mousebrain_Nglyco$limma_results <- tt <-
+  lapply(colnames(fit_FP$coefficients), function(x) {
+    limma::topTable(fit_FP, coef = x, number = Inf) %>%
+      mutate(contrast = x, dataset = "FP") %>%
+      rownames_to_column(var = "Protein.ID")
+  }) %>%
+  bind_rows() %>%
+  left_join(mapping %>%  distinct(Gene, Protein.ID, Protein.Description), by = "Protein.ID") %>%
+  bind_rows(
+    lapply(colnames(fit_glyco$coefficients), function(x) {
+      limma::topTable(fit_glyco, coef = x, number = Inf) %>%
+        mutate(contrast = x, dataset = "glyco") %>%
+        rownames_to_column(var = "ID")
+    }) %>%
+      bind_rows() %>%
+      separate(ID, into = c("Protein.ID", "Modified.Peptide", "Observed.Modifications"), sep = "_", remove = F) %>% 
+      left_join(mapping %>%  distinct(Protein.ID, Protein.Description, Gene, Modified.Peptide, Observed.Modifications, glycan_type, n_position), 
+                by = c("Protein.ID", "Modified.Peptide", "Observed.Modifications"))
+  ) %>%
+  mutate(
+    hit = ifelse((logFC > log2(1.5) & adj.P.Val < 0.05), "hit", "no hit"),
+    hit = ifelse((logFC < log2(1 / 1.5) & adj.P.Val < 0.05), "hit", hit)
+  ) %>%
+  mutate(
+    direction = ifelse(logFC > 0 & hit == "hit", "up", "no change"),
+    direction = ifelse(logFC < 0 & hit == "hit", "down", direction)
+  )
+
+res_microbiome_mousebrain_Nglyco$limma_results <- res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  mutate(glyco_position = n_position)
+```
+
+### Numbers
+
+```{r}
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  group_by(dataset, contrast,direction,  hit) %>% 
+  count()
+
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  mutate(ID = ifelse(dataset == "FP", Protein.ID, ID)) %>% 
+  distinct(ID, dataset,  hit) %>% 
+  group_by(dataset,  hit) %>% 
+  count()
+
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  mutate(ID = ifelse(dataset == "FP", Protein.ID, ID)) %>% 
+  distinct(Protein.ID, dataset, hit) %>% 
+  group_by(dataset, hit) %>% 
+  count()
+
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  mutate(ID = ifelse(dataset == "FP", Protein.ID, ID)) %>% 
+  distinct(Gene, dataset, hit) %>%
+  filter(hit == "hit") %>% 
+  group_by(Gene) %>% 
+  count() %>% 
+  filter(n ==2)
+```
+
+```{r}
+res_microbiome_mousebrain_Nglyco$limma_results %>%
+  #mutate(dataset = ifelse(dataset == "full proteome", "FP", "glyco")) %>%
+  filter(hit == "hit") %>%
+  # mutate(class =ifelse(logFC > 0, "up", "down")) %>%
+  distinct(dataset, Protein.ID) %>%
+  dcast(Protein.ID ~ dataset) %>%
+  mutate(
+    FP = ifelse(is.na(FP), FALSE, TRUE),
+    glyco = ifelse(is.na(glyco), FALSE, TRUE)
+  ) %>%
+  ggplot() +
+  ggvenn::geom_venn(
+    aes(
+      A = `FP`,
+      B = `glyco`
+    ),
+    fill_color = c("darkorange", "darkblue", "darkred", "darkgreen"),
+    fill_alpha = 1,
+    stroke_alpha = 1,
+    stroke_color = "white",
+    set_name_size = 5,
+    # set_names = c("HEK", "HeLa"),
+    text_size = 4,
+    text_color = "white",
+    show_percentage = FALSE
+  ) +
+  coord_fixed() +
+  theme_void() +
+  labs(title = "Full proteome and \nglycoproteome all contrasts")
+
+```
+
+### Volcano
+
+```{r}
+ggplot(
+  res_microbiome_mousebrain_Nglyco$limma_results %>%
+    mutate(
+      contrast = str_replace(contrast, "-", "-\n"),
+      contrast = factor(contrast, levels = c("monocolonized-\ngermfree", "community-\ngermfree", "community-\nmonocolonized"))
+    ),
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_grid(dataset ~ contrast) +
+  # theme_bw(14) +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change", y = "-log10 p-value")
+```
+
+```{r}
+ggplot(
+  res_microbiome_mousebrain_Nglyco$limma_results %>%
+    filter(dataset == "glyco") %>% 
+    mutate(
+      contrast = str_replace(contrast, "-", "-\n"),
+      contrast = factor(contrast, levels = c("monocolonized-\ngermfree", "community-\ngermfree", "community-\nmonocolonized"))
+    ),
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_grid(contrast~ glycan_type) +
+  # theme_bw(14) +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change", y = "-log10 p-value")
+```
+
+
+
+# 6. Interesting processes
+
+## glyco
+
+```{r}
+processes <- bind_rows(
+  res_microbiome_mousebrain_Nglyco$limma_results %>%
+    filter(grepl("Gria|Gabra|Glra|Grin|Grik|Grm|Gabbr|Gabrb|Gabrg|Gabrd", Gene)) %>%
+    distinct(Gene, Protein.Description) %>%
+    mutate(
+      biol_process = str_extract(Protein.Description, "Glutamate|glutamate|Gamma"),
+      biol_process = ifelse(grepl("Glutamate|glutamate", biol_process), "Glutamate\nreceptor", "GABA\nreceptor")
+    ),
+  res_microbiome_mousebrain_Nglyco$limma_results %>%
+    filter(hit == "hit") %>%
+    filter(grepl("channel", Protein.Description)) %>% distinct(Gene, Protein.Description) %>%
+    mutate(biol_process = "Ion\nchannels"),
+  data.frame(
+    Gene = c("Sema4a", "Plxna4", "Dscam", "Grin2b", "Epha4", "Col6a1", "Ncstn", "Sema4d", "Dcc", "Dpysl2", "Plxnb3", "Plxna1", "Dag1", "Col6a2", "Itgb3", "Reln", "Grin1", "Itgb1"),
+    biol_process = "Axon\nguidance"
+  )
+) %>%
+  mutate(biol_process = factor(biol_process, levels = c("Axon\nguidance", "Glutamate\nreceptor", "Ion\nchannels", "GABA\nreceptor")))
+
+
+
+hits <- res_microbiome_mousebrain_Nglyco$limma_results %>%
+  filter(dataset == "glyco" & hit == "hit") %>%
+  mutate(ID = paste0(Gene, "_", Modified.Peptide))
+
+col_fun <- circlize::colorRamp2(c(-1.5, 0, 1.5), c("dodgerblue4", "white", "indianred"), transparency = 0)
+
+anno <- processes %>%
+  inner_join(res_microbiome_mousebrain_Nglyco$limma_results %>% filter(dataset == "glyco") %>% distinct(Gene, Modified.Peptide, contrast, logFC), multiple = "all") %>%
+  mutate(ID = paste0(Gene, "_", Modified.Peptide)) %>%
+  as.data.frame() %>%
+  filter(ID %in% hits$ID) %>%
+  dcast(Gene + ID + biol_process ~ contrast, value.var = "logFC", fun.aggregate = median)
+
+ComplexHeatmap::Heatmap(
+  processes %>%
+    inner_join(res_microbiome_mousebrain_Nglyco$limma_results %>%
+      filter(dataset == "glyco") %>%
+      distinct(Gene, Modified.Peptide, contrast, logFC), multiple = "all") %>%
+    mutate(ID = paste0(Gene, "_", Modified.Peptide)) %>%
+    filter(ID %in% hits$ID & contrast != "community-monocolonized") %>%
+    mutate(contrast = str_replace(contrast, "-", "-\n")) %>%
+    acast(ID + biol_process ~ contrast, value.var = "logFC", fun.aggregate = median),
+  col = col_fun,
+  cluster_rows = T,
+  show_column_names = T,
+  row_split = anno$biol_process,
+  show_column_dend = F,
+  show_row_dend = F,
+  show_row_names = F,
+  right_annotation = HeatmapAnnotation(
+    "process" = anno$biol_process,
+    col = list(
+      process = c("GABA\nreceptor" = "goldenrod", "Glutamate\nreceptor" = "darkred", "Ion\nchannels" = "darkcyan", "Axon\nguidance" = "mediumvioletred")
+    ),
+    which = "row",
+    show_annotation_name = FALSE
+  ),
+  name = "log2 fold-change"
+)
+```
+
+## FP
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm_FP_anno %>% 
+  filter(grepl("Gng", Gene)) %>% 
+  ggplot(aes(x = Gene, y = quant_norm, colour = microbiome)) +
+  geom_point() +
+  scale_colour_manual(values  = c("germfree" = "#7D9FC5", "community" = "#C11555",  "monocolonized" = "darkseagreen")) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+```
+
+
+```{r, fig.height =10}
+processes <- bind_rows(
+  res_microbiome_mousebrain_Nglyco$limma_results %>%
+    filter(grepl("Gng", Gene)) %>%
+    distinct(Gene) %>%
+    mutate(
+      biol_process = "Gng\nproteins"
+    ),
+  data.frame(
+    Gene = c("Ndufab1", "Cox19", "Slc25a14", "Uqcrh", "Uqcr11", "Cox14", "Cox7a2l", "Ndufa4", "Sdhaf4", "Cox5b", "Coa6", "Sdhaf2", "Ppp1r1a", "Mt3", "S100b", "Cox17", "Sdhd", "Adrb1", "Pdha2", "Cox7a2", "Cox7a1", "Sdhc"),
+    biol_process = "Cellular\nrespiration"
+  )
+)
+
+hits <- res_microbiome_mousebrain_Nglyco$limma_results %>%
+  filter(dataset == "FP"& hit == "hit") %>%
+  mutate(ID = Gene)
+
+col_fun <- circlize::colorRamp2(c(-1.5, 0, 1.5), c("dodgerblue4", "white", "indianred"), transparency = 0)
+
+anno <- processes %>%
+  inner_join(res_microbiome_mousebrain_Nglyco$limma_results %>% filter(dataset == "FP") %>% distinct(Gene, contrast, logFC), multiple = "all") %>%
+  mutate(ID = Gene) %>%
+  as.data.frame() %>%
+  filter(ID %in% hits$ID) %>%
+  dcast(Gene + ID + biol_process ~ contrast, value.var = "logFC", fun.aggregate = median)
+
+ComplexHeatmap::Heatmap(
+  processes %>%
+    inner_join(res_microbiome_mousebrain_Nglyco$limma_results %>%
+      filter(dataset == "FP") %>%
+      distinct(Gene, contrast, logFC), multiple = "all") %>%
+    mutate(ID = Gene) %>%
+    filter(ID %in% hits$ID & contrast != "community-monocolonized") %>%
+    mutate(contrast = str_replace(contrast, "-", "-\n")) %>%
+    acast(ID + biol_process ~ contrast, value.var = "logFC", fun.aggregate = median),
+  col = col_fun,
+  cluster_rows = T,
+  show_column_names = T,
+  row_split = anno$biol_process,
+  show_column_dend = F,
+  show_row_dend = F,
+  show_row_names = T,
+  right_annotation = HeatmapAnnotation(
+    "process" = anno$biol_process,
+    col = list(
+      process = c("Cellular\nrespiration" = "grey60", "Gng\nproteins" = "palegreen4")
+    ),
+    which = "row",
+    show_annotation_name = FALSE
+  ),
+  name = "log2 fold-change"
+)
+```
+
+# 7. Example
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm_anno %>%
+   filter(grepl("Gria|Gabra|Glra|Grin|Grn|Gria|Gabra|Glra|Grin|Grik|Grm|Gabbr|Gabrb|Gabrg|Gabrd", Gene) & Gene %in% hits$Gene)  %>%
+  ggplot(aes(
+    x = as.factor(n_position),
+    y = cleaned_glycosignal,
+    colour = microbiome,
+    group = Modified.Peptide
+  )) +
+  # geom_boxplot() +
+  geom_point(position = position_dodge(width = 0.7), alpha = 0.5, size = 2) +
+  theme(legend.position = "right") +
+  scale_colour_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555", "monocolonized" = "darkseagreen")) +
+  facet_wrap(~Gene, scales = "free", ncol = 4) +
+  labs(x = "glycopeptides per site")
+
+res_microbiome_mousebrain_Nglyco$psm_anno %>%
+   filter(grepl("Grin2a", Gene))  %>%
+  ggplot(aes(
+    x = as.factor(n_position),
+    y = cleaned_glycosignal,
+    colour = microbiome,
+    group = Modified.Peptide
+  )) +
+  # geom_boxplot() +
+  geom_point(position = position_dodge(width = 0.7), alpha = 0.5, size = 2) +
+  theme(legend.position = "right") +
+  scale_colour_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555", "monocolonized" = "darkseagreen")) +
+  facet_wrap(~Gene, scales = "free", ncol = 4) +
+  labs(x = "glycopeptides per site")
+```
+
+```{r}
+hits <- res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(dataset == "glyco" & hit == "hit") %>% 
+  distinct(Gene) %>% 
+  filter(!is.na(Gene))
+
+FCs <- res_microbiome_mousebrain_Nglyco$limma_results  %>% 
+  filter(dataset == "glyco"& contrast == "community-germfree") %>% 
+  mutate(glycoID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications)) %>% 
+  distinct(glycoID, logFC, hit)
+
+
+for (hit in c("Grin2a")){
+  p <- res_microbiome_mousebrain_Nglyco$psm_anno %>% 
+  filter(Gene == hit) %>% 
+    mutate(glycoID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications)) %>% 
+    left_join(FCs, by = "glycoID") %>% 
+    filter(!is.na(Gene)) %>% 
+  ggplot(aes(x = as.factor(glyco_position), y = cleaned_glycosignal, colour = microbiome, group = reorder(Modified.Peptide, -abs(logFC)))) +
+  #geom_boxplot() + 
+  geom_point(position =position_dodge(width = 0.7), alpha = 0.5, size =2) +
+  theme(legend.position = "right") +
+  scale_colour_manual(values  = c("germfree" = "#7D9FC5", "community" = "#C11555", "monocolonized" = "darkseagreen")) +
+  facet_wrap(~Gene, scales = "free", ncol = 2)  +
+  labs(x = "glycosite positon", y = "log2 normalized\nglycopeptide intensity",
+       title = unique(na.omit(res_microbiome_mousebrain_Nglyco$limma_results$Protein.Description[res_microbiome_mousebrain_Nglyco$limma_results$Gene == hit])))
+  plot(p)
+}
+
+```
+
+
+# 8. Hit fractions
+
+```{r}
+res_microbiome_mousebrain_Nglyco$limma_results <- res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  mutate(glyco_position = n_position)
+set.seed(1)
+dirfraction_df <- bind_rows(
+dirfraction_random_df <- res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(dataset == "glyco" ) %>% 
+  mutate(direction = ifelse(logFC > 0, "up", "down")) %>% 
+  mutate(direction_s = sample(direction, replace = F)) %>% 
+  group_by(contrast, Protein.ID, glyco_position, glycan_type, hit, direction_s) %>% 
+  count() %>% 
+  filter(hit == "hit") %>% 
+  ungroup() %>% 
+  dcast(contrast + Protein.ID + glyco_position + glycan_type ~ direction_s, value.var = "n", fill = 0) %>% 
+  mutate(all_gf = up + down) %>% 
+  filter(all_gf > 1) %>% 
+  mutate(direction_fraction = up/all_gf) %>% 
+  mutate(data = "random"),
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(dataset == "glyco" ) %>% 
+  mutate(direction = ifelse(logFC > 0, "up", "down")) %>% 
+  group_by(contrast, Protein.ID,glyco_position, glycan_type, hit, direction) %>% 
+  count() %>% 
+  filter(hit == "hit") %>% 
+  ungroup() %>% 
+  dcast(contrast + Protein.ID + glyco_position + glycan_type ~ direction, value.var = "n", fill = 0) %>% 
+  mutate(all_gf = up + down) %>% 
+  filter(all_gf > 1) %>% 
+  mutate(direction_fraction = up/all_gf) %>% 
+  mutate(data = "true")
+)
+
+dirfraction_df %>% 
+  mutate(glycan_type = factor(glycan_type, levels = names(pal))) %>%
+  #filter(data == "true" & grepl("fuc|sia|com|high", glycan_type)) %>%
+  ggplot(aes(x = direction_fraction, y = -0.5, colour = data)) +
+  #geom_boxplot(orientation = "y") +
+  ggforce::geom_sina(orientation = "y", stroke = 0,alpha = 0.5, size =2) +
+  geom_density(aes(x = direction_fraction,  colour = data), inherit.aes = FALSE, size = 0.8) +
+  geom_hline(yintercept = 0, colour = "grey60") +
+  scale_colour_manual(values = c("grey", "darkblue")) +
+  theme(legend.position = "none") +
+  scale_y_continuous(labels = scales::label_number(accuracy = 1), limits = c(-1, 2.5)) +
+  labs(x = "fraction of upregulated\n glycoforms per site", y = "data | density")
+
+dirfraction_df %>% 
+  mutate(glycan_type = factor(glycan_type, levels = names(pal))) %>%
+  filter(data == "true" & grepl("fuc|sia|com|high", glycan_type)) %>%
+  ggplot(aes(x = direction_fraction, y = -0.5, colour = glycan_type)) +
+  #geom_boxplot(orientation = "y") +
+  ggforce::geom_sina(orientation = "y", stroke = 0,alpha = 0.5, size =2) +
+  geom_density(aes(x = direction_fraction,  colour = glycan_type), inherit.aes = FALSE, size = 0.8) +
+  geom_hline(yintercept = 0, colour = "grey60", linetype = 1) +
+  scale_y_continuous(labels = scales::label_number(accuracy = 1), limits = c(-1, 2.5)) +
+  scale_color_brewer(palette = "Set1") +
+  theme(legend.position = "none") +
+  labs(x = "fraction of upregulated\n glycoforms per site", y = "glycan type | density")
+```
+
+```{r}
+set.seed(1)
+
+hitfrac_df <- bind_rows(
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(dataset == "glyco" ) %>%  
+  group_by(contrast, Protein.ID,glyco_position, glycan_type, hit) %>% 
+  count() %>% 
+  dcast(contrast + Protein.ID + glyco_position + glycan_type ~ hit, fill = 0) %>% 
+  mutate(all_gf = hit + `no hit`) %>% 
+  filter(all_gf > 1) %>% 
+  mutate(hit_fraction = hit/all_gf, data = "true"),
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(dataset == "glyco" ) %>% 
+  mutate(hit = sample(hit)) %>% 
+  group_by(contrast, Protein.ID,glyco_position, glycan_type, hit) %>% 
+  count() %>% 
+  dcast(contrast + Protein.ID + glyco_position + glycan_type ~ hit, fill = 0) %>% 
+  mutate(all_gf = hit + `no hit`) %>% 
+  filter(all_gf > 1) %>% 
+  mutate(hit_fraction = hit/all_gf, data = "random")
+)
+ 
+  hitfrac_df %>% 
+  filter(hit_fraction > 0 ) %>% 
+  mutate(glycan_type = factor(glycan_type, levels = names(pal))) %>% 
+  ggplot(aes(x = hit_fraction, y = -1, colour = data)) +
+    ggforce::geom_sina(orientation = "y", stroke = 0,alpha = 0.5, size =2) +
+geom_density(aes(x = hit_fraction, colour = data), inherit.aes = FALSE, size = 0.8) +
+     geom_hline(yintercept = 0, colour = "grey30") +
+    theme(legend.position = "none") +
+    scale_colour_manual(values = c("grey", "darkblue")) +
+    scale_y_continuous(labels = scales::label_number(accuracy = 1), limits = c(-1.5, 7)) +
+  labs(x = "fraction of significantly\n regulated glycoforms per site", y = "data | density")
+
+  hitfrac_df %>% 
+  filter(hit_fraction > 0 ) %>% 
+  mutate(glycan_type = factor(glycan_type, levels = names(pal))) %>% 
+    filter(grepl("fuc|sia|comp|high", glycan_type)) %>% 
+  ggplot(aes(x = hit_fraction, y = -1, colour = glycan_type)) +
+    ggforce::geom_sina(orientation = "y", stroke = 0,alpha = 0.5, size =1) +
+geom_density(aes(x = hit_fraction,  colour = glycan_type), inherit.aes = FALSE, size = 0.8) +
+     geom_hline(yintercept = 0, colour = "grey30", linetype = 1) +
+    theme(legend.position = "none") +
+    scale_color_brewer(palette = "Set1")+
+     scale_y_continuous(labels = scales::label_number(accuracy = 1), limits = c(-1.5, 7)) +
+  labs(x = "fraction of significantly\n regulated glycoforms per site", y = "data | density")
+```
+
+# 9. unique comps per site
+
+```{r}
+hits <- res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(dataset == "glyco" & hit == "hit")
+
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  mutate(hit_anno = ifelse(Protein.ID %in% hits$Protein.ID, "at least one hit", "no hit")) %>% 
+  filter(dataset == "glyco") %>%
+  distinct(hit_anno, glyco_position, Protein.ID, Observed.Modifications) %>% 
+  group_by(hit_anno, Protein.ID, glyco_position) %>% 
+  count(feature = "forms per site")%>% 
+  group_by(hit_anno, n) %>% 
+  summarise(a = n()) %>% 
+  ungroup() %>% 
+  mutate(anno = ifelse(n > 30, "big", "other")) %>% 
+  group_by(hit_anno, anno) %>% 
+  mutate(a_sum = sum(a))%>% 
+  ungroup() %>% 
+  mutate(a = ifelse(n > 30, a_sum , a),
+         n = ifelse(n > 30,  ">30", as.character(n))) %>% 
+  distinct() %>%
+  mutate(freq = a/sum(a)*100) %>% 
+  mutate(n = factor(n, levels = c(as.character(seq(1:30)), ">30")))%>% 
+  ggplot(aes(x = n, y = freq, fill = hit_anno)) +
+  geom_bar(position = "dodge", stat = "identity") +
+  scale_x_discrete(breaks = c("1", "10", "20", ">30")) +
+  # scale_fill_manual(values = c("darkslateblue")) +
+  labs(y = "frequency [%]", x = "# gycocompositions per site")
+
+rm(hits)
+```
+
+
+# 10. enzymes
+
+```{r}
+glygen_transferases <- 
+  bind_rows(
+    "human" = read_csv("~/Documents/07_uniprot/human_protein_glycosyltransferase.csv") %>% 
+  mutate(Protein.ID = str_remove(uniprotkb_canonical_ac, "-\\d+")),
+  "mouse" = read_csv("~/Documents/07_uniprot/mouse_protein_glycosyltransferase.csv") %>% 
+  mutate(Protein.ID = str_remove(uniprotkb_canonical_ac, "-\\d+")),
+  .id = "species"
+  ) %>% 
+  distinct(species, Protein.ID, Gene = gene_symbol)
+
+glygen_hydrolases <- 
+  bind_rows(
+  "human" = read_csv("~/Documents/07_uniprot/human_protein_glycohydrolase.csv") %>% 
+  mutate(Protein.ID = str_remove(uniprotkb_canonical_ac, "-\\d+")),
+  "mouse" = read_csv("~/Documents/07_uniprot/mouse_protein_glycohydrolase.csv") %>% 
+  mutate(Protein.ID = str_remove(uniprotkb_canonical_ac, "-\\d+")),
+  .id = "species"
+  ) %>% 
+  distinct(species, Protein.ID, Gene = gene_symbol)
+
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(hit == "hit" & dataset == "FP") %>% 
+  filter(Protein.ID %in% glygen_hydrolases$Protein.ID) %>% 
+  distinct(Gene)
+
+res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(hit == "hit"  & dataset == "FP") %>% 
+  filter(Protein.ID %in% glygen_transferases$Protein.ID) %>% 
+  distinct(Gene)
+```
+
+
+# Save
+
+```{r}
+save(res_microbiome_mousebrain_Nglyco, file = paste0("results/", Sys.Date(), "_res_microbiome_mousebrain_Nglyco.RData"))
+```

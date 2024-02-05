@@ -1,0 +1,579 @@
+---
+title: "Plots for tissue figure"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "~/Documents/01_repos/Glycoproteomics/")
+```
+
+```{r}
+setwd("~/Documents/01_repos/Glycoproteomics/")
+```
+
+
+## Packages
+
+```{r, message=F, warning =F, include=}
+library(tidyverse)
+library(ggplot2); theme_set(cowplot::theme_cowplot(font_size = 15))
+library("reshape2")
+library(ggrepel)
+library(knitr)
+library(Biostrings)
+library(ComplexHeatmap)
+library(viridis)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", "#ffe300ff","#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+
+tissue_pal <- c( "#1B9E77", "#D95F02", "#E7298A")
+names(tissue_pal) <- c("brain", "kidney", "liver")
+
+tilted <-  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1))
+blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+```{r}
+load("data/paper/revision1/processed/2024-01-15_res_mouse_tissue_atlas.RData")
+```
+
+
+# A - workflow
+# B- correlation matrix and PCA
+
+```{r}
+m <- acast(res_mouse_tissue_atlas$glyco_psm_corrected, 
+           glycoID ~ sample, value.var = "cleaned_glycosignal", fill = 0, fun.aggregate = median)
+
+
+
+m[m== 0] <- NA
+m <- m %>% 
+  as.data.frame() %>% 
+  drop_na()%>% 
+  as.matrix()
+
+m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+  order(decreasing = T) %>%
+  head(6000), ]
+
+m <- t(m)
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample_glyco") %>%
+  left_join(res_mouse_tissue_atlas$TMT_info) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = tissue, shape = paste0(mouse, "_", replicate))) +
+    geom_hline(yintercept = 0, linetype =3)+
+  geom_vline(xintercept = 0, linetype =3)+
+  geom_point(size = 3) +
+  scale_colour_manual(values = tissue_pal) +
+  labs(
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)")) +
+  lims(x = c(-135, 135), y = c(-135, 135)) +
+  coord_fixed()
+```
+
+
+
+# C- corr cartoon
+
+# C - corr
+
+```{r}
+m <- dcast(res_mouse_tissue_atlas$glyco_psm_corrected %>%  drop_na(), 
+           glycoID ~ tissue + mouse+replicate, value.var = "cleaned_glycosignal", fun.aggregate = median) 
+
+m %>% 
+  column_to_rownames("glycoID") %>% 
+  as.matrix() %>% 
+  cor(use = "pairwise.complete.obs", method = "spearman") %>% 
+  ComplexHeatmap::Heatmap(col = circlize::colorRamp2(c(0.5,1), c( "white", "darkred")))
+
+m %>% 
+  column_to_rownames("glycoID") %>% 
+  as.matrix() %>% 
+  cor(use = "pairwise.complete.obs", method = "spearman") %>% 
+  melt() %>% 
+  separate(Var1, into = c("tissue1", "mouse1", "replicate1")) %>% 
+  separate(Var2, into = c("tissue2", "mouse2", "replicate2")) %>% 
+  filter(tissue1 == tissue2) %>% 
+  group_by(tissue1) %>% 
+  summarise(m = mean(value))
+```
+
+# D -  densitites
+
+```{r}
+m <- res_mouse_tissue_atlas$corr_per_site_per_mouse %>%
+  filter(tissue1 != tissue2)%>% 
+  drop_na() %>% 
+  ungroup() %>% 
+  summarise(mean_corr = mean((value))) 
+
+res_mouse_tissue_atlas$corr_per_site_per_mouse %>% 
+  drop_na() %>% 
+  distinct(mouse, value, .keep_all = T) %>% 
+  mutate(comparison = paste0(tissue1, "_", tissue2)) %>% 
+  ggplot(aes(x = value, linetype = comparison)) +
+  geom_vline(xintercept = 0, linetype =1) +
+  geom_vline(xintercept = m$mean_corr, linetype =3) +
+  geom_density(size=0.8, bounds = c(-1,1)) +
+  lims(x = c(-1, 1)) +
+  theme(legend.position = "bottom")
+
+m <- res_mouse_tissue_atlas$corr_per_site %>%
+    drop_na() %>% 
+  separate(tissue1, into = c("t1", "m1"), remove = F) %>% 
+  separate(tissue2, into = c("t2", "m2"), remove = F) %>% 
+  filter(t1 == t2) %>% 
+  ungroup() %>% 
+  summarise(mean_corr = mean((value))) 
+
+res_mouse_tissue_atlas$corr_per_site %>% 
+  drop_na() %>% 
+  separate(tissue1, into = c("t1", "m1"), remove = F) %>% 
+  separate(tissue2, into = c("t2", "m2"), remove = F) %>% 
+  filter(t1 == t2) %>% 
+  mutate(comparison = paste0(tissue1, "_", tissue2)) %>% 
+  #filter(tissue1 == "liver_mouse1" & tissue2 == "kidney_mouse2") %>% 
+  ggplot(aes(x = value, colour = t1)) +
+  geom_vline(xintercept = 0, linetype =1) +
+  geom_vline(xintercept = m$mean_corr, linetype =3) +
+  geom_density(size=0.8, bounds = c(-1,1)) +
+  scale_colour_manual(values = tissue_pal) +
+  lims(x = c(-1, 1)) +
+  theme(legend.position = "bottom")
+```
+
+
+# E- frac dens
+
+```{r}
+data <- res_mouse_tissue_atlas$corr_per_site_per_mouse %>%  
+ group_by(mouse, Protein.ID) %>%
+  mutate(n_sites_protein = n_distinct(n_position)) %>%
+  filter(n_sites_protein > 2) %>% 
+  #filter(tissue1 != tissue2)%>% 
+  group_by(mouse, Protein.ID, n_position, n_sites_protein) %>% 
+  summarise(mean_corr = mean(value, na.rm =T)) %>% 
+  mutate(type = ifelse(mean_corr < 0.6691, "tissue specific", "not tissue specific"))%>% 
+  group_by(mouse,Protein.ID, n_sites_protein, type) %>% 
+  summarise(n_sites_type = n()) %>% 
+  ungroup() %>% 
+  mutate(frac= n_sites_type/ n_sites_protein) %>% 
+  filter(type == "tissue specific") 
+
+m <-  mean(data$frac)
+
+data %>% 
+  ggplot(aes(x=frac)) +
+  geom_vline(xintercept = 0.5, linetype = 1) +
+  #geom_histogram() +
+  geom_density(size =1, bounds = c(0,1), adjust = 0.8, fill ="grey70", alpha = 0.5)+
+  #annotate("text", x=0.6, y=1.9, label="50% of sites\nshow low correlation\nacross tissues") +
+  #facet_wrap(~mouse) +
+  labs(x = "fraction of tissue specific sites per protein") + 
+  lims(x = c(0, 1))
+```
+
+
+# F- Insr
+
+```{r}
+res_mouse_tissue_atlas$corr_per_site_per_mouse %>%
+      drop_na() %>%
+      filter(tissue1 != tissue2) %>%
+      filter(Gene == "Insr") %>%
+      #mutate(value = ifelse(value < 0, 0, value)) %>%
+      ggplot(aes(x = tissue1, y = tissue2, fill = value)) +
+      geom_tile() +
+      scale_fill_distiller(palette = "Blues", direction = "rev", limits = c(0, 1)) +
+      facet_grid( ~ n_position) +
+     cowplot::panel_border()
+```
+
+
+# G - domains
+
+```{r, fig.height=6, fig.width=7}
+res_mouse_tissue_atlas$domain_ORA  %>% 
+  mutate(odds_ratio = ifelse(!is.finite(odds_ratio),20, odds_ratio))%>% 
+  filter(interpro_description %in% c("Plexin family", "Fibronectin type III superfamily", "Cadherin-like", "Immunoglobulin-like fold"))%>% 
+  mutate(interpro_description = factor(interpro_description, levels = c("Plexin family", "Fibronectin type III superfamily", "Cadherin-like", "Immunoglobulin-like fold"))) %>% 
+  ggplot(aes(y = interpro_description, x = log2(odds_ratio), size = n_type_domain, colour = corr_hit, shape = hit)) +
+  geom_point() +
+  geom_vline(xintercept = c(-1.7, 0, 1.7), linetype = c(3,1,3)) +
+  scale_colour_manual(values = c("#08519C" , "#9ECAE1" )) +
+  scale_size(range = c(4, 10)) +
+  theme(panel.grid.major.y = element_line(colour = "lightgrey"))
+
+```
+
+# H- high mann higher
+
+```{r}
+res_mouse_tissue_atlas$corr_per_site_per_mouse_gt %>% 
+  filter(tissue1 != tissue2)%>% 
+  drop_na() %>% 
+  filter(glycan_type %in% c("fucosylated", "sialylated", "high mannose", "complex/hybrid")) %>% 
+  #filter(glycan_type %in% c("phospho", "paucimannose", "small")) %>% 
+  ggplot(aes(y = value, x = glycan_type, colour = glycan_type)) +
+  ggforce::geom_sina(alpha = 0.2, position = position_dodge(width = 0.9)) +
+    stat_summary(aes(group = glycan_type),fun = median, geom = "crossbar",
+               position = position_dodge(0.9), colour = "black") +
+  ggpubr::stat_compare_means(ref.group = "high mannose", label = "p.signif", method = "wilcox.test") +
+  scale_colour_manual(values = pal) +
+  blank
+```
+
+
+# I - subcellular
+
+```{r}
+locations_of_interest <- c("Endoplasmic reticulum", "Golgi apparatus","Lysosome", "Plasma membrane", "Extracellular")
+
+compartment_anno <- tt <- read_tsv("data/combined_loc_df.tsv")%>%
+  mutate(description = ifelse(grepl("Extracellular", description), "Extracellular", description)) %>% 
+  filter(description %in% locations_of_interest) %>% 
+  group_by(gene) %>%
+  filter(score > 2.5) %>%
+  mutate(species = ifelse(grepl("MUS", ensembl_prot), "mus musculus", "homo sapiens")) %>% 
+  rename(Gene = gene) %>% 
+  group_by(Gene) %>% 
+  mutate(n_annos =n())  
+
+pm_proteins <- compartment_anno %>% 
+  filter(description == "Plasma membrane")
+
+extracell_proteins <- compartment_anno %>% 
+  filter(description == "Extracellular")
+
+compartment_anno <- compartment_anno %>% 
+  mutate(description = ifelse(Gene %in% extracell_proteins$Gene, "Extracellular", description)) %>% 
+  mutate(description = ifelse(Gene %in% pm_proteins$Gene, "Plasma membrane", description)) %>% 
+  distinct(species, Gene, description)
+
+res_mouse_tissue_atlas$corr_per_site_per_mouse %>%
+  filter(tissue1 != tissue2)%>% 
+  left_join(compartment_anno %>%  select(Gene, description), by = "Gene") %>% 
+  drop_na() %>% 
+  ggplot(aes(x = value, colour = description)) +
+  geom_density(size = 0.8) +
+  scale_color_brewer(palette =  "Set2")
+
+res_mouse_tissue_atlas$corr_per_site_per_mouse %>%
+  filter(tissue1 != tissue2)%>% 
+  left_join(compartment_anno %>%  select(Gene, description), by = "Gene") %>% 
+  drop_na() %>% 
+  mutate(description = factor(description, levels = c("Endoplasmic reticulum", "Golgi apparatus","Lysosome", "Plasma membrane", "Extracellular"))) %>% 
+  ggplot(aes(y = value, x = description)) +
+  ggforce::geom_sina(size = 3, alpha = 0.1, shape = 21, stroke = NA, fill = "black") +
+  stat_summary(fun = median, geom = "crossbar", colour = "indianred") +
+  ggpubr::stat_compare_means(ref.group = "Plasma membrane", label = "p.signif", method = "t.test") +
+  tilted +
+  labs(y="corelation across tissues")
+```
+
+
+# SA - volcano
+
+```{r}
+ggplot(
+  res_mouse_tissue_atlas$limma_results,
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_wrap(~contrast) +
+  # theme_bw(14) +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change", y = "-log10 p-value")
+
+```
+
+# SB - No bias towards the number of glycopeptides quantified per site was observed 
+
+```{r}
+ids_per_site <- res_mouse_tissue_atlas$glyco_psm_corrected %>% 
+  mutate(siteID = paste0(Gene, "_", n_position)) %>% 
+  drop_na() %>% 
+  distinct(glycoID, siteID) %>% 
+  group_by(siteID) %>% 
+  count(name = "n_per_site")
+
+hit_def <- res_mouse_tissue_atlas$corr_per_site_per_mouse%>%
+  filter(tissue1 != tissue2)%>% 
+  mutate(siteID = paste0(Gene, "_", n_position)) %>%
+  drop_na() %>% 
+  group_by(mouse, Protein.ID, siteID) %>% 
+  summarise(mean_corr = mean((value))) %>% 
+  mutate(hit =  ifelse(mean_corr > 0.6691, "not tissue specific site", "tissue specific site"))%>% 
+  inner_join(ids_per_site)
+
+hit_def %>% 
+  ggplot(aes(y = (n_per_site), x = hit)) +
+  ggforce::geom_sina(size = 0.5, alpha= 0.2) +
+  stat_summary(fun = median, geom = "crossbar", colour = "indianred") +
+  ggpubr::stat_compare_means(label.y = 150, comparisons = list(c( "not tissue specific site", "tissue specific site"))) +
+  labs(y = "# quant glycopeptides (zoomed in)", x = "") +
+  tilted +
+  lims(y = c(0, 200))
+```
+
+# SC - summed intensities
+
+```{r}
+n_mod <-  res_mouse_tissue_atlas$glyco_psm_corrected %>%
+  drop_na() %>% 
+  distinct(glycoID, Observed.Modifications) %>% 
+  group_by(Observed.Modifications) %>% 
+  count()
+
+fractional_intensities <- res_mouse_tissue_atlas$glyco_psm_corrected %>%
+  drop_na() %>% 
+  distinct(mouse, glycan_type, Observed.Modifications, tissue, replicate, cleaned_glycosignal) %>% 
+  inner_join(n_mod) %>% 
+  filter(n > 10) %>% 
+  select(-n) %>% 
+  mutate(cleaned_glycosignal = 2^cleaned_glycosignal) %>% 
+  group_by(mouse,glycan_type, Observed.Modifications, tissue) %>% 
+  summarise(cleaned_glycosignal = sum(cleaned_glycosignal)) %>% 
+  group_by(mouse,glycan_type, Observed.Modifications) %>% 
+  mutate(total_int = sum(cleaned_glycosignal)) %>% 
+  ungroup() %>% 
+  mutate(frac_int = cleaned_glycosignal/total_int)
+
+
+fractional_intensities %>% 
+  group_by(tissue, glycan_type) %>% 
+  summarise(sum_int = (sum((cleaned_glycosignal)))) %>% 
+  ggplot(aes(x = glycan_type, fill = tissue, y = sum_int)) +
+  geom_bar(stat = "identity", pos = "dodge")+
+  scale_fill_manual(values = tissue_pal) +
+  tilted +
+  labs(y = "summed intensity")
+```
+
+```{r}
+fractional_intensities %>% 
+  filter(glycan_type == "fucosylated") %>% 
+  mutate(glycan_type = ifelse(grepl("Fuc\\(1\\)", Observed.Modifications), "monofuc", "multifuc")) %>% 
+  group_by(tissue, glycan_type) %>% 
+  summarise(sum_int = (sum((cleaned_glycosignal)))) %>% 
+  ggplot(aes(x = glycan_type, fill = tissue, y = sum_int)) +
+  geom_bar(stat = "identity", pos = "dodge")+
+  scale_fill_brewer(palette = "Dark2") +
+  tilted +
+  labs(y = "\ summed\n intensity")
+```
+
+
+
+# SD- highest frac int
+
+```{r}
+fractional_intensities <- res_mouse_tissue_atlas$glyco_psm_corrected %>%
+  drop_na() %>% 
+  distinct(glycoID, mouse, Observed.Modifications, tissue, replicate, cleaned_glycosignal) %>% 
+  mutate(cleaned_glycosignal = 2^cleaned_glycosignal) %>% 
+  group_by(mouse, glycoID,Observed.Modifications, tissue) %>% 
+  summarise(cleaned_glycosignal = sum(cleaned_glycosignal)) %>% 
+  group_by(mouse, glycoID, Observed.Modifications) %>% 
+  mutate(total_int = sum(cleaned_glycosignal)) %>% 
+  ungroup() %>% 
+  mutate(frac_int = cleaned_glycosignal/total_int)
+
+top10 <- fractional_intensities %>% 
+  distinct(mouse, glycoID, Observed.Modifications, tissue, frac_int)%>% 
+  group_by(mouse, tissue) %>% 
+  slice_max(prop = 0.01, order_by = frac_int) %>% 
+  distinct(mouse, tissue,glycoID,Observed.Modifications, frac_int)%>% 
+  ungroup() %>% 
+  mutate(  mass = str_extract(Observed.Modifications, " .+$"),
+      mass = as.numeric(str_replace(mass, " % ", ""))) %>% 
+  mutate(
+    fuc_cat = str_extract_all(Observed.Modifications, "Fuc\\(\\d+\\)"),
+    sia_cat = str_extract_all(Observed.Modifications, "NeuGc\\(\\d+\\)|NeuAc\\(\\d+\\)")
+  ) %>%
+  mutate(
+    fuc_cat = sapply(
+      str_extract_all(fuc_cat, "[[:digit:]]+"),
+      function(x) ifelse(identical(x, character(0)), NA, sum(as.numeric(x)))
+    ),
+    sia_cat = sapply(
+      str_extract_all(sia_cat, "[[:digit:]]+"),
+      function(x) ifelse(identical(x, character(0)), NA, sum(as.numeric(x)))
+    )
+  ) %>% 
+  left_join(res_mouse_tissue_atlas$glyco_psm_corrected %>%  distinct(Observed.Modifications, glycan_type))
+
+top10 %>% 
+  mutate(tissue = factor(tissue, levels = c("brain","liver", "kidney"))) %>% 
+  ggplot(aes(y = mass, x = tissue, colour =tissue)) +
+  ggforce::geom_sina(stroke = NA, alpha = 0.2) +
+  geom_boxplot(colour = "black", fill =NA) +
+  stat_compare_means(comparisons = list(c("brain", "liver"), c("brain", "kidney")), method = "wilcox.test") +
+  scale_colour_manual(values= tissue_pal) +
+  labs(subtitle = "top1 frac int per tissue")
+```
+
+#SE - highest frac glycan type
+
+```{r}
+top10 %>% 
+  ggplot(aes(x = tissue, fill =glycan_type)) +
+  geom_bar()  +
+  scale_fill_manual(values = pal) +
+  tilted
+```
+
+# SF - NeuGC vs NeuAC
+
+```{r}
+top10 %>% 
+  mutate(sia_type = ifelse(grepl("NeuGc", Observed.Modifications), "NeuGc", "not sialylated"),
+         sia_type = ifelse(grepl("NeuAc", Observed.Modifications), "NeuAc", sia_type),
+         sia_type = ifelse(grepl("NeuAc", Observed.Modifications) & grepl("NeuGc", Observed.Modifications), "both", sia_type)) %>% 
+  filter(sia_type != "not sialylated") %>% 
+  ggplot(aes(x = tissue, fill =sia_type)) +
+  geom_bar(pos = "fill")  +
+  #facet_wrap(~mouse)+
+  tilted +
+  labs( y = "fraction")
+```
+
+# SG
+```{r}
+n_mod <-  res_mouse_tissue_atlas$glyco_psm_corrected %>%
+  drop_na() %>% 
+  distinct(glycoID, Observed.Modifications) %>% 
+  group_by(Observed.Modifications) %>% 
+  count()
+
+fractional_intensities_20obs <- res_mouse_tissue_atlas$glyco_psm_corrected %>%
+  drop_na() %>% 
+  distinct(mouse, Observed.Modifications, tissue, replicate, cleaned_glycosignal) %>% 
+  inner_join(n_mod) %>% 
+  filter(n > 10) %>% 
+  select(-n) %>% 
+  mutate(cleaned_glycosignal = 2^cleaned_glycosignal) %>% 
+  group_by(mouse, Observed.Modifications, tissue) %>% 
+  summarise(cleaned_glycosignal = sum(cleaned_glycosignal)) %>% 
+  group_by(mouse, Observed.Modifications) %>% 
+  mutate(total_int = sum(cleaned_glycosignal)) %>% 
+  ungroup() %>% 
+  mutate(frac_int = cleaned_glycosignal/total_int)
+
+top_comps <- fractional_intensities_20obs %>% 
+  group_by(mouse, tissue) %>% 
+  slice_max(order_by = frac_int, n = 10)
+
+top_tissue <- fractional_intensities_20obs %>% 
+  filter(Observed.Modifications %in% top_comps$Observed.Modifications) %>% 
+  group_by(mouse, Observed.Modifications) %>% 
+  mutate(top_tissue = ifelse(frac_int == max(frac_int), tissue, "not top")) %>% 
+  ungroup() %>% 
+  filter(top_tissue != "not top") %>% 
+  distinct(mouse, Observed.Modifications, top_tissue)
+
+  
+fractional_intensities_20obs %>% 
+  filter(Observed.Modifications %in% top_comps$Observed.Modifications) %>% 
+  inner_join(top_tissue) %>% 
+  filter(mouse == "mouse2") %>% 
+  mutate(Observed.Modifications= tidytext::reorder_within(Observed.Modifications, frac_int, top_tissue))%>%
+  mutate(Observed.Modifications = str_remove(Observed.Modifications, "%.+")) %>% 
+  ggplot(aes(x = Observed.Modifications, y = frac_int, fill = tissue)) +
+  geom_col(pos = "stack") +
+  scale_fill_manual(values = tissue_pal) +
+  facet_wrap(~top_tissue, scales="free") +
+  tilted +
+  theme(axis.text.x = element_text(size = 8))
+
+```
+
+
+```{r}
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
