@@ -1,0 +1,339 @@
+---
+title: "Plots for Figure 2"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "~/Documents/01_repos/Glycoproteomics/")
+```
+
+## Packages
+
+```{r, message=F, warning =F, include=}
+library(tidyverse)
+library(ggplot2); theme_set(cowplot::theme_cowplot(font_size = 15))
+library("reshape2")
+library(ggrepel)
+library(knitr)
+library(VennDiagram)
+library(Biostrings)
+library(ComplexHeatmap)
+library(viridis)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+filter <- dplyr::filter
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", "#ffe300ff","#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+
+```
+
+
+```{r}
+#load("data/paper/top_runs/230213_allspecies_psm_processed.RData")
+load("2024-05-02_combined_lf_data_human_and_mouse.RData")
+# riley et al
+riley_glycopsm <- readxl::read_excel("data/comparisons/riley/glycopsms.xlsx", sheet = 2)%>% 
+  mutate(glycan_content = Glycans) %>% 
+  separate(glycan_content, into = c("hexnac", "hexnac_content", "hex", "hex_content", "end"), sep = "\\(|\\)", extra = "merge", remove = FALSE) %>%
+    mutate(
+      hexnac_content = as.numeric(hexnac_content),
+      hex_content = as.numeric(hex_content),
+      end = ifelse(is.na(end), "", end)
+    ) %>%
+    mutate(glycan_type = case_when(
+      grepl("Phospho", glycan_content) ~ "phospho",
+      grepl("NeuAc", glycan_content) ~ "sialylated",
+      grepl("Fuc", glycan_content) ~ "fucosylated",
+      hexnac_content == 2 & hex_content > 3 & end == "" ~ "high mannose",
+      hexnac_content == 2 & hex_content %in% 1:3 & end == "" ~ "paucimannose",
+      hexnac_content <= 2 & hex == "" & end == "" ~ "small",
+      TRUE ~ "complex/hybrid"
+    ))%>% 
+  mutate(mass = str_extract(Mods, "NGlycan / \\d+\\."),
+         mass = str_replace(mass, "\\.", ""),
+         mass = as.numeric(str_replace(mass, "NGlycan / ", ""))) %>% 
+  mutate(Gene =  mapIds(org.Mm.eg.db, Uniprot, "SYMBOL", "UNIPROT"))
+```
+
+# A
+
+average on x axis
+
+```{r}
+# forms per site
+data <- res_species$psm %>%
+  distinct(species, n_position, Protein.ID, Observed.Modifications) %>% 
+  group_by(species, Protein.ID, n_position) %>% 
+  count(feature = "forms per site")%>% 
+  group_by(species, n) %>% 
+  summarise(a = n()) %>% 
+  ungroup() %>% 
+  mutate(anno = ifelse(n > 30, "big", "other")) %>% 
+  group_by(species, anno) %>% 
+  mutate(a_sum = sum(a))%>% 
+  ungroup() %>% 
+  mutate(a = ifelse(n > 30, a_sum , a),
+         n = ifelse(n > 30,  ">30", as.character(n))) %>% 
+  distinct() %>%
+  group_by(species) %>% 
+  mutate(freq = a/sum(a)*100) %>% 
+  mutate(n = factor(n, levels = c(as.character(seq(1:30)), ">30"))) %>% 
+  filter(grepl("mouse", species))
+
+tmp <- res_species$psm %>% 
+  filter(grepl("mouse", species)) %>%
+  distinct(n_position, Protein.ID, Observed.Modifications) %>% 
+  group_by(Protein.ID, n_position) %>% 
+  count(feature = "forms per site")
+mean(tmp$n)
+
+data %>% 
+  ggplot(aes(x = n, y = freq, fill = species)) +
+  #geom_vline(xintercept =  mean(as.numeric(tmp$n)), linetype = 3) +
+  geom_bar(position = "dodge", stat = "identity", fill = "darkslateblue" ) +
+  scale_x_discrete(breaks = c("1", "10", "20", ">30")) +
+  # scale_fill_manual(values = c("darkslateblue")) +
+  labs(y = "frequency [%]", x = "# gycocompositions per site")
+```
+
+
+# B
+
+```{r}
+
+res_species$psm %>% 
+  distinct(species, glycan_type, Protein.ID, Modified.Peptide, Observed.Modifications) %>% 
+  group_by(species, glycan_type) %>% 
+  count(feature = "glyco\npeptides") %>% 
+  bind_rows(res_species$psm %>% 
+    distinct(species, glycan_type,Protein.ID, n_position) %>% 
+      group_by(species, glycan_type) %>% 
+    count(feature = "glyco\nsites")) %>% 
+  bind_rows(res_species$psm %>% 
+    distinct(species, glycan_type,Protein.ID) %>%
+      group_by(species, glycan_type) %>% 
+    count(feature = "glyco\nproteins"))%>% 
+  mutate(feature = factor(feature, levels = c("glyco\npeptides", "glyco\nsites", "glyco\nproteins")),
+         glycan_type = factor(glycan_type, levels = order)) %>% 
+  filter(grepl("mouse", species)) %>% 
+  ggplot(aes(x =feature, y = n, fill = glycan_type)) +
+  geom_bar(stat = "identity", pos = "dodge") +
+  scale_fill_manual(values = pal) +
+  facet_wrap(~feature, scales = "free", drop = T) +
+  #scale_x_discrete(labels = c("human \ncell lines", "mouse \nbrain")) +
+  labs(x = "", y = "ID number")
+
+```
+
+# C
+
+```{r}
+res_species$psm %>% 
+  filter(species == "mouse\nbrain") %>% 
+  distinct(Protein.ID, n_position, mass, glycan_type) %>% 
+  mutate(mass = str_extract(mass, "\\d+\\."),
+         mass = as.numeric(str_replace(mass, "\\.", "")),
+         dataset = "This study") %>% 
+  distinct(Protein.ID, n_position, mass, dataset, glycan_type) %>% 
+  bind_rows(riley_glycopsm %>% 
+  distinct(Protein.ID = Uniprot, n_position = GlycoSite, mass, glycan_type) %>% 
+mutate(dataset = "Riley et al.")) %>% 
+  group_by(dataset, glycan_type) %>% 
+  count() %>% 
+  group_by(dataset) %>% 
+  mutate(freq = n/sum(n))%>% 
+  dcast(glycan_type ~ dataset, value.var = "freq") %>% 
+  ggplot(aes(`Riley et al.`, `This study`, colour = glycan_type)) +
+  geom_abline(slope = 1, linetype = 3) +
+  geom_point(size = 4, shape = 15) +
+  scale_colour_manual(values = pal) +
+  xlim(c(0, 0.7)) +
+  ylim(c(0, 0.7)) +
+  coord_fixed() +
+  labs(x = "type frequency Riley et al.", y ="type frequency this study")
+```
+
+# D
+
+```{r}
+load("results/2024-05-06_domain_ORA_Nglyco.RData")
+```
+
+
+```{r}
+domain_enrichment_N %>% 
+  filter(adj.p.val < 1e-3) %>% 
+  filter(grepl("^Saposin$|^Immunoglobulin-like domain$|^Sodium:dicarboxylate symporter$|Sodium/potassium-transporting ATPase subunit beta superfamily", interpro_description)) %>% 
+  mutate(class = ifelse(grepl("Saposin", interpro_description), "saposin domains", "Sodium:dicarboxylate\n symporter"),
+         class = ifelse(grepl("^Immunoglobulin-like domain", interpro_description), "immunoglobulin domains", class),
+         class = ifelse(grepl("Sodium/potassium-transporting ATPase", interpro_description), "Sodium/potassium-transporting\n ATPase domains", class))%>% 
+  ggplot(aes(y = class, x = log2(odds_ratio), size = n_type_domain, colour = glycan_type)) +
+  #geom_point(shape = 15) +
+  ggbeeswarm::geom_beeswarm(cex = 4)+
+  geom_vline(xintercept = 0, linetype = 3) +
+  scale_colour_manual(values = pal) +
+  scale_size(range = c(2.5, 6)) +
+  labs(y = "")
+```
+
+
+
+# F
+
+```{r}
+load("results/2024-05-06_microheterogeneityER_string.RData")
+
+interesting_pathways <- data.frame(category = c("Process", "Process", "COMPARTMENTS", "COMPARTMENTS", "Function", "Component", "COMPARTMENTS"),
+           description = c("Cell adhesion", "Cell-cell adhesion","Plasma membrane", "Receptor complex", "Transmembrane signaling receptor activity", "Extracellular region", "Cell surface"))
+
+interesting_pathways <- data.frame(category = c("Process", "COMPARTMENTS",  "Function", "Component"),
+           description = c("Cell adhesion","Plasma membrane", "Transmembrane signaling receptor activity", "Extracellular region"))
+
+ER_string_microheterogeneity %>% 
+  inner_join(interesting_pathways) %>% 
+  ggplot(aes(x = -log10(fdr), y = description, colour = bin)) +
+  geom_vline(xintercept = -log10(0.05), linetype = 3) +
+  geom_point(aes(size = number_of_genes)) +
+  scale_size(range = c(3, 8)) +
+  scale_colour_manual(values = c("lightblue", "steelblue", "dodgerblue4")) +
+  labs(y = "", x = "-log10 false discovery rate", colour = "microheterogeneity")+
+  theme(panel.grid.major.y = element_line(colour = "grey60"), legend.position = "right") 
+  
+```
+
+# E
+
+purople
+
+```{r}
+load("results/2024-05-06_glycositecorrelation_obsmod.RData")
+```
+
+```{r}
+site_corr_obsmod %>%
+  filter(input == "everything") %>% 
+  ggplot(aes(x= perm, y = corr)) +
+  # geom_histogram(position = "dodge") +
+  ggforce::geom_sina(alpha = 0.1, colour = "darkslateblue") +
+  geom_boxplot(colour = "black", fill = NA, width = 0.5) +
+  ggpubr::stat_compare_means(label.y = 1.1,label.x = 1.3, paired = T) +
+  labs(y = "correlation of sites/protein", x = "data (per glycan composition)")
+
+t <- site_corr_obsmod %>%
+  filter(input == "everything") %>% 
+  select(Protein.ID, site1, site2, corr, perm) %>% 
+  drop_na() %>% 
+  dcast(Protein.ID+site1+site2 ~ perm, value.var = "corr") %>% 
+  ungroup()
+
+
+  wilcox.test(t$random, t$true, paired = T) 
+  
+```
+
+# G
+
+```{r}
+#load("data/paper/top_runs/230223_Mouse_brain_lf_Oglyco_psm_processed.RData")
+load( "data/2024-05-06_mousebrain_fractionated_Oglyco_combined_psm_processed.RData")
+
+mouse_psites <- read_tsv("data/paper/revision1/comparison_to_datasets/230203_uniprot_mouse_psites.tsv") %>% 
+  distinct(Protein.ID = Entry, modification_info = `Modified residue`) %>% 
+  mutate(mod = str_extract_all(modification_info, 'MOD_RES \\d+; /note=\\"Phospho\\w+\\";')) %>% 
+  unnest(cols = c(mod)) %>% 
+  separate(mod, into = c("mod", "type"), sep = "/")%>% 
+  mutate(psite_position= as.numeric(str_extract(mod, "\\d+"))) 
+```
+
+```{r}
+
+bind_rows(res_mousebrain_fractionated_Oglyco_combined$psm %>% 
+  #filter(species == "mouse\nbrain") %>% 
+  distinct(Protein.ID, Protein.Start, Protein.End, glycan_type)%>% 
+  group_by(glycan_type) %>% 
+  mutate(bin_size = n()) %>% 
+  ungroup() %>% 
+  left_join(mouse_psites %>% distinct(Protein.ID, psite_position), by = "Protein.ID")%>% 
+  mutate(close = ifelse(Protein.Start-5 < psite_position &  psite_position < Protein.End+5, "psite closer than 5 aa", "no")) %>% 
+  filter(!is.na(psite_position) & !is.na(glycan_type)) %>% 
+  group_by(glycan_type,bin_size, close) %>% 
+  summarise(a = n()) %>% 
+  mutate(freq = a/bin_size*100) %>% 
+  filter(close == "psite closer than 5 aa" & bin_size > 5) %>% 
+    mutate(data = "O-glyco"),
+  res_species$psm %>% 
+  filter(species == "mouse\nbrain") %>% 
+  distinct(Protein.ID, Protein.Start, Protein.End, glycan_type, n_position)%>% 
+  group_by(glycan_type) %>% 
+  mutate(bin_size = n()) %>% 
+  ungroup() %>% 
+  left_join(mouse_psites %>% distinct(Protein.ID, psite_position), by = "Protein.ID")%>% 
+  mutate(close = ifelse(n_position-5 < psite_position &  psite_position < n_position+5, "psite closer than 5 aa", "no")) %>% 
+  filter(!is.na(psite_position) & !is.na(glycan_type)) %>% 
+  group_by(glycan_type,bin_size, close) %>% 
+  summarise(a = n()) %>% 
+  mutate(freq = a/bin_size*100) %>% 
+  filter(close == "psite closer than 5 aa" & bin_size > 5) %>% 
+    mutate(data = "N_glyco")
+  ) %>% 
+  #mutate(glycan_type = factor(glycan_type, levels = c(order, "sulfated"))) %>% 
+   ggplot(aes(x = data, y = freq, fill = glycan_type)) +
+  geom_bar(stat = "identity", pos = "dodge") +
+  #scale_fill_manual(values = c(mycolors, "grey60")) +
+  #scale_fill_brewer(palette = "Set1") +
+  #lims(y = c(0, 30)) +
+  labs(y = "# glycopeptides with close psite [%]", x = "") 
+
+res_species$psm %>% 
+  filter(species == "mouse\nbrain") %>% 
+  distinct(Protein.ID, Protein.Start, Protein.End, glycan_type, n_position)%>% 
+  group_by(glycan_type) %>% 
+  mutate(bin_size = n()) %>% 
+  ungroup() %>% 
+  left_join(mouse_psites %>% distinct(Protein.ID, psite_position), by = "Protein.ID")%>% 
+  mutate(close = ifelse(n_position-5 < psite_position &  psite_position < n_position+5, "psite closer than 5 aa", "no")) %>% 
+  filter(!is.na(psite_position) & !is.na(glycan_type)) %>% 
+  group_by(glycan_type,bin_size, close) %>% 
+  summarise(a = n()) %>% 
+  mutate(freq = a/bin_size*100) %>% 
+  filter(close == "psite closer than 5 aa" & bin_size > 5) %>% 
+    mutate(data = "N_glyco")
+```
+
+
+
+
+
+
+
+

@@ -1,0 +1,321 @@
+---
+title: "Plots for Figure 1"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "~/Documents/01_repos/Glycoproteomics/")
+```
+
+```{r}
+setwd("~/Documents/01_repos/Glycoproteomics/")
+```
+
+
+## Packages
+
+```{r, message=F, warning =F, include=}
+library(tidyverse)
+library(ggplot2); theme_set(cowplot::theme_cowplot(font_size = 15))
+library("reshape2")
+library(ggrepel)
+library(knitr)
+library(Biostrings)
+library(ComplexHeatmap)
+library(viridis)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", "#ffe300ff","#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+
+order_O <- c("O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+pal_O <- c("lightgrey",  "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", '#a65628ff',"#f781bfff")
+names(pal_O) <- c("FP", "O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+tilted <-  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1))
+blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+
+```{r}
+# load("data/paper/top_runs/230227_HEK_HeLa_glyco_3best_runs_largedatabase_psm_processed.RData")
+```
+
+# A
+
+workflow diagram
+
+# B
+
+Combine single shot data
+
+
+```{r}
+load("data/2024-05-02_res_HEK_Hela_optimisation_psm_processed.RData")
+load("data/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
+
+psm_singleshot_combined <- 
+  res_HEK_Hela_optimisation$psm %>% 
+  filter(experiment == "scan_ranges" & grepl("700-2000", sample)) %>% 
+  mutate(species ="human\ncell lines") %>% 
+  bind_rows(res_singleshot_mousebrain$psm %>%  mutate(replicate =as.character(replicate)) %>%  filter(replicate %in% c("1", "5", "2")))
+
+res_singleshot_mousebrain$psm %>%  mutate(replicate =as.character(replicate)) %>% 
+  group_by(sample, replicate) %>% 
+  summarise(n_pep= n_distinct(Protein.ID, Modified.Peptide, Observed.Modifications))
+
+res_HEK_Hela_optimisation$psm %>% 
+     filter(experiment == "singleshot")%>% 
+     group_by(replicate) %>% 
+     summarise(n_pep= n_distinct(Protein.ID, Modified.Peptide, Observed.Modifications))
+
+
+```
+
+
+```{r}
+load("2024-05-02_combined_lf_data_human_and_mouse.RData")
+psm_singleshot_combined %>% 
+  distinct(species,sample, replicate, Protein.ID, Modified.Peptide, Observed.Modifications)%>% 
+  group_by(species,sample, replicate) %>% 
+  count(feature = "glyco\npeptides") %>% 
+  bind_rows(psm_singleshot_combined %>% 
+    distinct(species,sample, replicate, Protein.ID, n_position) %>% 
+    group_by(species,sample, replicate)%>% 
+    count(feature = "glyco\nsites") ) %>% 
+  bind_rows(psm_singleshot_combined %>% 
+    distinct(species,sample,  replicate, Protein.ID) %>% 
+    group_by(species,sample,  replicate) %>% 
+    count(feature = "glyco\nproteins"))%>% 
+  mutate(feature = factor(feature, levels = c("glyco\npeptides", "glyco\nsites", "glyco\nproteins"))) %>% 
+    group_by(feature, species) %>% 
+  summarise(mean_IDnumber = mean(n), sd = sd(n))%>% 
+  # filter(grepl("mouse", species)) %>% 
+  ggplot(aes(x = feature, y = mean_IDnumber, fill = species)) +
+  geom_bar(stat = "identity", pos = "dodge") +
+  geom_text(aes(label = round(mean_IDnumber)), vjust = -1.5, pos = position_dodge(width = 1), size = 3) +
+  geom_errorbar(aes(ymin=mean_IDnumber-sd, ymax=mean_IDnumber+sd), width=.2,
+                 position=position_dodge(.9))+
+  theme(#axis.text.x = element_text(angle = 45, hjust = 1, vjust =1), 
+        #legend.position = "none",
+        axis.ticks.y = element_blank(), axis.text.y = element_blank()) +
+  lims(y = c(0, 18000)) +
+  #facet_wrap(~feature, scales = "free") +
+  labs(y = "ID number", x = "")
+```
+
+```{r}
+bind_rows(
+  "single-shot" = psm_singleshot_combined %>%  filter(grepl("mouse", species)),
+  "PGC fractionation" = res_species$psm %>%  filter(grepl("mouse", species)),
+  .id = "dataset"
+) %>% 
+  ggplot(aes(x = as.numeric(mass), colour = dataset)) +
+  geom_density(adjust = 5)
+```
+
+```{r}
+res_species$psm_total %>% 
+ group_by(species, modification) %>% 
+  summarise(median_mass = median( `Calibrated.Observed.Mass` , na.rm = T))
+
+psm_singleshot_combined %>% 
+  group_by(species)
+```
+
+
+
+# C
+
+```{r}
+#load("data/paper/revision1/processed/2024-01-08_combined_lf_data_human_and_mouse.RData")
+```
+
+
+```{r}
+psm_singleshot_combined <- 
+  res_HEK_Hela_optimisation$psm_total %>% 
+  filter(experiment == "singleshot") %>% 
+  mutate(species ="human\ncell line") %>% 
+  bind_rows(res_singleshot_mousebrain$psm_total %>%  mutate(replicate =as.character(replicate)) %>%  filter(replicate %in% c("1", "6", "2")))
+psm_singleshot_combined %>%  distinct(species, replicate)
+
+res_species$psm_total %>% 
+  #filter(species == "mouse\nbrain") %>% 
+  mutate(glycosylation = as.character(glycosylation)) %>%
+  # count()%>% 
+  mutate(replicate = ifelse(grepl("human", species), dataset, "1")) %>% 
+  bind_rows(psm_singleshot_combined %>%  mutate(species = paste0(species, "_ss"))) %>% 
+  distinct(species, modification, Protein.ID, Modified.Peptide, replicate) %>% 
+  group_by(species, modification, replicate) %>% 
+  count()%>% 
+  dcast(species + replicate ~ modification, value.var = "n") %>% 
+  mutate(specificity = (100/(glycosylation + unmodified))*glycosylation) %>% 
+  group_by(species) %>% 
+  summarise(mean_specificity = mean(specificity), sd = sd(specificity)) %>% 
+  ggplot(aes(x = species, y = mean_specificity, fill = species)) +
+  geom_bar(stat = "identity", pos = "dodge") +
+  geom_errorbar(aes(ymin=mean_specificity-sd, ymax=mean_specificity+sd), width=.2,
+                 position=position_dodge(.9)) +
+  ylim(c(0,100)) +
+  theme(legend.position = "none")  +
+  labs(y = "specificity (% PSM)", x = "")
+
+```
+
+# D
+
+
+```{r}
+# identification nn
+res_species$psm %>% 
+  distinct(species, Protein.ID, Modified.Peptide, Observed.Modifications) %>% 
+  group_by(species) %>% 
+  count(feature = "glyco\npeptides") %>% 
+  bind_rows(res_species$psm %>% 
+    distinct(species, Protein.ID, n_position) %>% 
+    group_by(species)%>% 
+    count(feature = "glyco\nsites") ) %>% 
+  bind_rows(res_species$psm %>% 
+    distinct(species, Protein.ID) %>% 
+    group_by(species) %>% 
+    count(feature = "glyco\nproteins"))%>% 
+  mutate(feature = factor(feature, levels = c("glyco\npeptides", "glyco\nsites", "glyco\nproteins")))%>% 
+  filter(grepl("mouse", species)) %>% 
+  ggplot(aes(x = feature, y = n, fill = species)) +
+  geom_bar(stat = "identity", n_position = "dodge") +
+  geom_text(aes(label = n), vjust = -0.5) +
+  scale_fill_manual(values = c("darkslateblue")) +
+  lims(y = c(0, 190000)) +
+  theme(
+        legend.position = "none",
+        axis.text.y = element_blank(), axis.ticks.y = element_blank()) +
+  #facet_wrap(~feature, scales = "free") +
+  labs(y = "ID number \n deep fractionation", x = "")
+```
+
+```{r}
+res_species$psm_total %>% 
+  group_by(species, modification) %>% 
+  summarise(median_mass = median( `Calibrated.Observed.Mass` , na.rm = T))
+```
+
+
+# E
+
+```{r}
+# load("data/paper/top_runs/230213_allspecies_psm_processed.RData")
+# load("data/paper/comparison_to_datasets/uniprot_annotation_comparison.RData")
+previos_anno_df <- read_csv("data/paper/revision1/comparison_to_datasets/merged_anno_glycosites_uniprot_psp.csv") %>%  mutate(origin = str_replace(origin, "out_data", "Potel et al."))
+#load("data/paper/revision1/processed/2024-01-08_combined_lf_data_human_and_mouse.RData")
+```
+
+```{r}
+res_species$psm %>% 
+  filter(grepl("mouse", species)) %>% 
+  mutate(id = paste0(Protein.ID, "_", n_position)) %>% 
+  distinct(id) %>%  
+  left_join(previos_anno_df %>% filter(!grepl("Potel", origin))) %>% 
+  mutate(origin = ifelse(is.na(origin), "Potel et al.", origin)) %>% 
+  group_by(id) %>% 
+  summarise(or = as.character(list(origin))) %>% 
+  ungroup() %>% 
+  mutate(status = ifelse(grepl("psite|uniprot", or), "annotated", "not annotated")) %>% 
+  ggplot(aes(x= "mouse brain",fill = status)) +
+    geom_bar(pos = "stack") + 
+    #lims(y = c(0, 10000)) +
+    # position = position_stack(reverse = TRUE)) +
+    # scale_fill_manual(values = c("peru", "wheat3", "grey70","turquoise4")) +
+    #scale_fill_manual(values = c("peru", "wheat3", "turquoise4")) +
+    labs(x= "", y = "# of glycosites")
+```
+
+# F
+
+```{r}
+#load("results/20230323_massrange_compariosn.RData")
+load("results/2024-05-06_massrange_comparison.RData")
+```
+
+```{r}
+massrange_comparison %>% 
+  filter(is.finite(mass) & mass > 0) %>% 
+  ggplot(aes(x = mass, fill = dataset, colour = dataset)) +
+  geom_histogram( position="dodge", binwidth = 500) +
+  scale_colour_manual(values = c("springgreen4", "darkorange", 'darkslateblue'))+
+  scale_fill_manual(values = c("springgreen4", "darkorange", 'darkslateblue' )) +
+  labs(y = "ID number", x = "glycan mass")
+
+```
+
+# G
+
+```{r}
+load("data/2024-05-06_mousebrain_fractionated_Oglyco_combined_psm_processed.RData")
+```
+
+```{r}
+res_mousebrain_fractionated_Oglyco_combined$psm %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications))%>% 
+  summarise(n_peptides = n_distinct(pepID), n_glycoproteins = n_distinct(Protein.ID)) %>% 
+  melt() %>% 
+  mutate(variable = ifelse(variable == "n_glycoproteins", "glyco\nproteins", "glyco\npeptides")) %>% 
+  ggplot(aes(x = variable, y = value)) +
+  geom_bar(stat = "identity", fill = "orange3") +
+  geom_text(aes(label = value), size = 3, vjust = -0.5 ) +
+  #theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+  labs(y = "ID number \n deep fractionation O-glyco", x= "")
+
+```
+
+# H
+
+```{r}
+load("results/2024-05-06_ER_string_NvsO.RData")
+```
+
+```{r}
+ER_NvsO_string %>% 
+  ungroup() %>% 
+  filter(grepl("^Intracellular organelle$|^Plasma membrane$", description) & category == "Component") %>% 
+  #mutate(cc = ifelse(grepl("^membrane$|^integral component of membrane$|^plasma membrane$", Term), "membrane", "cytoplasm")) %>% 
+  ggplot(aes(x = -log10(fdr), y = description, colour = dataset)) +
+  geom_vline(xintercept = -log10(0.05), linetype = 3) +
+  geom_point(aes(size = number_of_genes)) +
+  scale_size(range = c(3, 10)) +
+  scale_colour_manual(values = c("thistle2", "darkslateblue", "orange3")) +
+  labs(y = "", x = "-log10 false discovery rate")+
+  theme(panel.grid.major.y = element_line(colour = "grey60"), legend.position = "right") 
+```
+
+
+

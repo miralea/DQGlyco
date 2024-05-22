@@ -54,88 +54,77 @@ options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgre
 
 ```{r}
 # Data1
-# load("data/paper/revision1/processed/2024-01-08_Hela_lf_scanranges_3rep_psm_processed.RData")
-# load("data/paper/revision1/processed/2024-01-08_Mouse_brain_lf_singleshot_psm_processed.RData")
-# load("data/paper/revision1/processed/2024-01-08_humancelllines_lf_3best_psm_processed.RData")
-
-load("data/2024-05-02_res_HEK_Hela_optimisation_psm_processed.RData")
-load("data/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
+load("data/paper/revision1/processed/2024-01-08_Hela_lf_scanranges_3rep_psm_processed.RData")
+load("data/paper/revision1/processed/2024-01-08_Mouse_brain_lf_singleshot_psm_processed.RData")
+load("data/paper/revision1/processed/2024-01-08_humancelllines_lf_3best_psm_processed.RData")
 # Data2
-# load("data/paper/revision1/processed/2024-01-08_mousebrain_fractionated_Nglyco_psm_processed.RData")
-# load("data/paper/revision1/processed/2024-01-08_res_mousebrain_steppedHCD_psm_processed.RData")
-# load("data/paper/revision1/processed/2024-01-10_mousebrain_fractionated_Oglyco_psm_processed.RData")
-# load("data/paper/revision1/processed/2024-01-10_mousebrain_fractionated_steppedHCD_Oglyco_psm_processed.RData")
-# load("data/paper/revision1/processed/2024-01-08_HEK_lf_PGC_psm_processed.RData")
-# load("data/paper/revision1/processed/2024-01-08_HeLa_lf_PGC_psm_processed.RData")
-
-load("data/2024-05-02_mousebrain_fractionated_Nglyco_psm_processed.RData")
-load("data/2024-04-26_res_mousebrain_steppedHCD_psm_processed.RData")
-
-load("data/2024-05-06_mousebrain_fractionated_Oglyco_psm_processed.RData")
-load("data/2024-05-06_mousebrain_fractionated_steppedHCD_Oglyco_psm_processed.RData")
-
-load("data/2024-05-02_HEK_HeLa_lf_PGC_psm_processed.RData")
-
-
-
+load("data/paper/revision1/processed/2024-01-08_mousebrain_fractionated_Nglyco_psm_processed.RData")
+load("data/paper/revision1/processed/2024-01-08_res_mousebrain_steppedHCD_psm_processed.RData")
+load("data/paper/revision1/processed/2024-01-10_mousebrain_fractionated_Oglyco_psm_processed.RData")
+load("data/paper/revision1/processed/2024-01-10_mousebrain_fractionated_steppedHCD_Oglyco_psm_processed.RData")
+load("data/paper/revision1/processed/2024-01-08_HEK_lf_PGC_psm_processed.RData")
+load("data/paper/revision1/processed/2024-01-08_HeLa_lf_PGC_psm_processed.RData")
+# Data3
+load("data/paper/revision1/processed/2024-02-01_res_surface_acc.RData")
 # Data4
-load("results/2024-04-24_res_mouse_tissue_atlas.RData")
+load("data/paper/revision1/processed/2024-01-15_res_mouse_tissue_atlas.RData")
+# Data5
+load("data/paper/revision1/processed/2024-01-16_res_mouse_brain_solubility.RData")
 # Data6
-load("results/2024-04-29_res_microbiome_mousebrain_Nglyco.RData")
+load("data/paper/revision1/processed/2024-01-24_res_microbiome_mousebrain_Nglyco.RData")
 # Data7
 load("data/paper/revision1/processed/2024-01-24_res_microbiome_mousebrain_FPTPP.RData")
-
-
+#load("results/2023-03-01res_microbiome_mousebrain_Oglyco.RData")
 ```
 
 ## enrichments
 
 ```{r}
-load("results/2024-05-06_ER_string_NvsO.RData")
-load("results/2024-05-06_microheterogeneityER_string_Oglyco.RData")
-load("results/2024-05-06_microheterogeneityER_string.RData")
-load("results/2024-05-06_ER_string_N_glycantype.RData")
-load("results/2024-05-06_domain_ORA_Nglyco.RData")
+load("data/paper/revision1/results/2024-01-10_ER_string_NvsO.RData")
+load("data/paper/revision1/results/2024-01-08_microheterogeneityER_string.RData")
+load("data/paper/revision1/results/2024-01-11_microheterogeneityER_string_Oglyco.RData")
+load("data/paper/revision1/results/2024-01-11_ER_string_N_glycantype.RData")
+load("data/paper/revision1/results/2024-01-08_domain_ORA_Nglyco.RData")
 ```
 
 ## other
 
 ```{r}
-mouse_experiments <- readxl::read_excel("data/paper/submission2/supplementary_data/Mouse_experiments_information.xlsx")
+mouse_experiments <- readxl::read_excel("data/paper/revision1/supplementary_data/Mouse_experiments_information.xlsx")
 ```
 
-# Data 1 -optimisation
+# Data 1
 
 ```{r}
 optimization_data <- list(
-  "explanation" =  readxl::read_excel("data/paper/submission2/supplementary_data/suppdata_firstpage.xlsx", sheet = 1),
-  "glycan_database" = read_tsv("data/updated_db.tsv"),
-  # "N-glycosylation_HeLa" =
-  #   res_celllines$psm_total %>%
-  #     filter(grepl("HeLa", data)) %>%
-  #     distinct(Protein.ID, Gene, Protein.Description, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, mass, mass_bin = bin, modification, replicate = data) %>%
-  #     mutate(
-  #       data = "N-glyco",
-  #       glycan_type = ifelse(modification == "unmodified", NA, glycan_type),
-  #       Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
-  #       Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
-  #       Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
-  #       Modified.Peptide = ifelse(modification == "unmodified", NA, Modified.Peptide)
-  #     ),
-  # "N-glycosylation_HEK" =
-  #   res_celllines$psm_total %>%
-  #     filter(grepl("HEK", data)) %>%
-  #     distinct(Protein.ID, Gene, Protein.Description, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, mass, mass_bin = bin, modification, replicate = data) %>%
-  #     mutate(
-  #       data = "N-glyco",
-  #       glycan_type = ifelse(modification == "unmodified", NA, glycan_type),
-  #       Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
-  #       Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
-  #       Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
-  #       Modified.Peptide = ifelse(modification == "unmodified", NA, Modified.Peptide)
-  #     ),
+  "explanation" =  readxl::read_excel("data/paper/revision1/supplementary_data/suppdata_firstpage.xlsx", sheet = 1),
+  "glycan_database" = read.table("data/paper/revision1/supplementary_data/GlyTouCan_byonic_updated.txt"),
+  "N-glycosylation_HeLa" =
+    res_celllines$psm_total %>%
+      filter(grepl("HeLa", data)) %>%
+      distinct(Protein.ID, Gene, Protein.Description, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, mass, mass_bin = bin, modification, replicate = data) %>%
+      mutate(
+        data = "N-glyco",
+        glycan_type = ifelse(modification == "unmodified", NA, glycan_type),
+        Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+        Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+        Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
+        Modified.Peptide = ifelse(modification == "unmodified", NA, Modified.Peptide)
+      ),
+  "N-glycosylation_HEK" =
+    res_celllines$psm_total %>%
+      filter(grepl("HEK", data)) %>%
+      distinct(Protein.ID, Gene, Protein.Description, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, mass, mass_bin = bin, modification, replicate = data) %>%
+      mutate(
+        data = "N-glyco",
+        glycan_type = ifelse(modification == "unmodified", NA, glycan_type),
+        Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+        Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+        Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
+        Modified.Peptide = ifelse(modification == "unmodified", NA, Modified.Peptide)
+      ),
   "N-glycosylation_mousebrain" =
-    res_singleshot_mousebrain$psm_total %>%
+    res_singleshot$psm_total %>%
       distinct(Protein.ID, Gene, Protein.Description, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, mass, mass_bin = bin, modification, replicate) %>%
       mutate(
         data = "N-glyco_singleshot",
@@ -145,9 +134,7 @@ optimization_data <- list(
         Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]")
       ),
   "N-glyco_HeLa_scanranges"=
-    res_HEK_Hela_optimisation$psm %>% 
-  filter(experiment == "scan_ranges" ) %>% 
-    mutate(scan_range =  str_extract(sample, "450-2000|700-2000")) %>% 
+    res_scanranges$psm_total %>%
       distinct(scan_range, Protein.ID, Gene, Protein.Description, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, mass, mass_bin = bin, modification, replicate) %>%
       mutate(
         data = "N-glyco_scanranges",
@@ -160,12 +147,12 @@ optimization_data <- list(
 
 optimization_data <- lapply(optimization_data, as.data.frame)
 
-write.xlsx(optimization_data, file = "data/paper/submission2/supplementary_data/Supplementary_Data_1.xlsx")
+write.xlsx(optimization_data, file = "data/paper/revision1/supplementary_data/Supplementary_Data_1.xlsx")
 
 ```
 
 
-# Data 2 - PGC fractionation lf
+# Data 2
 
 ```{r}
 deep_mouse_brain <- list(
@@ -181,7 +168,7 @@ deep_mouse_brain <- list(
            Modified.Peptide = ifelse(modification == "unmodified", NA, Modified.Peptide)),
   "O-glycosylation" = 
     res_mousebrain_fractionated_Oglyco$psm %>%
-      select(Protein.ID, Gene, Protein.Description,Peptide, Protein.Start, Protein.End, glycan_type, Observed.Modifications, mass) %>%
+      select(Protein.ID, Gene, Protein.Description,Peptide, Protein.Start, Protein.End, glycan_type, Observed.Modifications, mass, mass_bin = bin) %>%
       mutate(data = "O-glyco", modification = "glycosylation"),
   "N-glycosylation_steppedHCD" =
     res_mousebrain_steppedHCD$psm_total %>%
@@ -194,7 +181,7 @@ deep_mouse_brain <- list(
            Modified.Peptide = ifelse(modification == "unmodified", NA, Modified.Peptide)),
    "O-glycosylation_steppedHCD" = 
     res_mousebrain_fractionated_Oglyco_steppedHCD$psm %>%
-      select(Protein.ID, Gene, Protein.Description,Peptide, Protein.Start, Protein.End, glycan_type, Observed.Modifications, mass) %>%
+      select(Protein.ID, Gene, Protein.Description,Peptide, Protein.Start, Protein.End, glycan_type, Observed.Modifications, mass, mass_bin = bin) %>%
       mutate(data = "O-glyco_steppedHCD", modification = "glycosylation"),
   # "N-glyco_site_centric" =
   #   res_mousebrain_fractionated_Nglyco$psm %>%
@@ -228,8 +215,7 @@ deep_mouse_brain <- list(
   #     group_by(Protein.ID, Gene, Protein.Description) %>%
   #     summarise(number_of_glycoforms = n_distinct(Modified.Peptide, Observed.Modifications)),
   "N-glycosylation_HEK" =
-    res_HEK_HeLa_lf_PGC$psm_total %>%
-    filter(grepl("HEK", Spectrum)) %>% 
+    res_HEK_lf_PGC$psm_total %>%
     distinct(Protein.ID, Gene, Protein.Description, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, mass, mass_bin = bin, modification) %>%
     mutate(data = "N-glyco_HEK", 
            glycan_type = ifelse(modification == "unmodified", NA, glycan_type),
@@ -238,8 +224,7 @@ deep_mouse_brain <- list(
            Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
            Modified.Peptide = ifelse(modification == "unmodified", NA, Modified.Peptide)),
    "N-glycosylation_HeLa" =
-    res_HEK_HeLa_lf_PGC$psm_total %>%
-     filter(grepl("HeLa|Hela", Spectrum)) %>% 
+    res_HeLa_lf_PGC$psm_total %>%
     distinct(Protein.ID, Gene, Protein.Description, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, mass, mass_bin = bin, modification) %>%
     mutate(data = "N-glyco_HeLa", 
            glycan_type = ifelse(modification == "unmodified", NA, glycan_type),
@@ -249,16 +234,46 @@ deep_mouse_brain <- list(
            Modified.Peptide = ifelse(modification == "unmodified", NA, Modified.Peptide))
 )
 deep_mouse_brain <- lapply(deep_mouse_brain, as.data.frame)
-write.xlsx(deep_mouse_brain, file = "data/paper/submission2/supplementary_data/Supplementary_Data_2.xlsx")
+write.xlsx(deep_mouse_brain, file = "data/paper/revision1/supplementary_data/Supplementary_Data_2.xlsx")
 ```
 
+# Data 3
 
+```{r}
+quantitative_data_surface <- list(
+  "explanation" =  readxl::read_excel("data/paper/revision1/supplementary_data/suppdata_firstpage.xlsx", sheet = 3),
+  "DEresults_affectedsites" =
+    res_surface_acc$limma_results %>%
+      mutate( Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "^n\\[mod\\]", "")) %>%
+      select(dataset, Protein.ID, Gene, n_position, Modified.Peptide, glycan_type, Observed.Modifications, contrast, logFC, adj.P.Val, hit, direction),
+  "DEresults_complete" =
+    res_surface_acc$limma_results_complete %>%
+      mutate( Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "^n\\[mod\\]", "")) %>%
+      select(dataset, Protein.ID, Gene, n_position, Modified.Peptide, glycan_type, Observed.Modifications, contrast, logFC, adj.P.Val, hit, direction),
+    "Nglyco_psm" =
+    res_surface_acc$psm  %>%
+    distinct(dataset, treatment, replicate, Protein.ID, Gene, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, quant_norm) %>%
+    mutate(data = "N-glyco_surfaceacc", 
+           Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]")
+           )
+)
+quantitative_data_surface <- lapply(quantitative_data_surface, as.data.frame)
+write.xlsx(quantitative_data_surface, file = "data/paper/revision1/supplementary_data/Supplementary_Data_3.xlsx")
+```
 
-# Data 3 - tissues
+# Data 4
 
 ```{r}
 quantitative_data_tissue <- list(
-  "explanation" =  readxl::read_excel("data/paper/submission2/supplementary_data/suppdata_firstpage.xlsx", sheet = 3),
+  "explanation" =  readxl::read_excel("data/paper/revision1/supplementary_data/suppdata_firstpage.xlsx", sheet = 4),
   "N-glyco_liver" =
     res_mouse_tissue_atlas$glyco_psm_corrected %>%
     filter(tissue == "liver") %>% 
@@ -291,16 +306,39 @@ quantitative_data_tissue <- list(
     summarise(quant_abundance_corrected = median(quant_abundance_corrected))
 )
 quantitative_data_tissue <- lapply(quantitative_data_tissue, as.data.frame)
-write.xlsx(quantitative_data_tissue, file = "data/paper/submission2/supplementary_data/Supplementary_Data_3.xlsx")
+write.xlsx(quantitative_data_tissue, file = "data/paper/revision1/supplementary_data/Supplementary_Data_4.xlsx")
 ```
 
+# Data 5
 
+```{r}
+quantitative_data_spp <- list(
+  "explanation" =  readxl::read_excel("data/paper/revision1/supplementary_data/suppdata_firstpage.xlsx", sheet = 5),
+  "solubility_ratios" =
+    res_mouse_brain_solubility$solubility_ratios %>%
+      mutate( Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "^n\\[mod\\]", "")) %>%
+      select(Protein.ID, Modified.Peptide, Observed.Modifications, group = variable, ratio = value),
+  "DE_results" =
+   res_mouse_brain_solubility$limma_results %>%
+      mutate( Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "^n\\[mod\\]", "")) %>%
+    filter(dataset == "ratio_comp_all") %>% 
+      select(dataset, Protein.ID, Gene, n_position, Modified.Peptide, glycan_type, Observed.Modifications, contrast, logFC, adj.P.Val, hit, direction)
+)
+quantitative_data_spp <- lapply(quantitative_data_spp, as.data.frame)
+write.xlsx(quantitative_data_spp, file = "data/paper/revision1/supplementary_data/Supplementary_Data_5.xlsx")
+```
 
-# Data 4 - microbiome
+# Data 6
 
 ```{r}
 quantitative_data_microbiome <- list(
-  "explanation" =  readxl::read_excel("data/paper/submission2/supplementary_data/suppdata_firstpage.xlsx", sheet = 4),
+  "explanation" =  readxl::read_excel("data/paper/revision1/supplementary_data/suppdata_firstpage.xlsx", sheet = 6),
   "mouse_experiments"= mouse_experiments,
   "results_N-glycosylation" =
     res_microbiome_mousebrain_Nglyco$limma_results %>%
@@ -320,14 +358,14 @@ quantitative_data_microbiome <- list(
       select(Protein.ID, Gene, Protein.Description, contrast, logFC, adj.P.Val, hit, direction)
 )
 quantitative_data_microbiome <- lapply(quantitative_data_microbiome, as.data.frame)
-write.xlsx(quantitative_data_microbiome, file = "data/paper/submission2/supplementary_data/Supplementary_Data_4.xlsx")
+write.xlsx(quantitative_data_microbiome, file = "data/paper/revision1/supplementary_data/Supplementary_Data_6.xlsx")
 ```
 
-# Data 5 - tpp
+# Data 7
 
 ```{r}
 quantitative_tpp <- list(
-  "explanation" =  readxl::read_excel("data/paper/submission2/supplementary_data/suppdata_firstpage.xlsx", sheet = 5),
+  "explanation" =  readxl::read_excel("data/paper/revision1/supplementary_data/suppdata_firstpage.xlsx", sheet = 7),
   "TPP_quant_info" =
     res_fpTPP_mousebrain_microbiome$FP_irs_norm_sclaed %>%
       select(Gene, ID, temperature, sample, quant_irs_norm, quant_irs),
@@ -336,18 +374,18 @@ quantitative_tpp <- list(
       select(Protein.ID, Gene, pVal, BHadjustpVal)
 )
 quantitative_tpp <- lapply(quantitative_tpp, as.data.frame)
-write.xlsx(quantitative_tpp, file = "data/paper/submission2/supplementary_data/Supplementary_Data_5.xlsx")
+write.xlsx(quantitative_tpp, file = "data/paper/revision1/supplementary_data/Supplementary_Data_7.xlsx")
 ```
 
 
-# Data 6 -ER
+# Data 8
 
 ```{r}
 
 micro_anno <- data.frame(bin = unique(ER_string_microheterogeneity$bin), microheterogeneity = c("low", "middle", "high"))
 
 enrichment_tables <- list(
-  "explanation" =  readxl::read_excel("data/paper/submission2/supplementary_data/suppdata_firstpage.xlsx", sheet = 6),
+  "explanation" =  readxl::read_excel("data/paper/revision1/supplementary_data/suppdata_firstpage.xlsx", sheet = 8),
   "N_and_O_string_enrichment" =
   ER_NvsO_string %>%
     dplyr::select(dataset, description, category, number_of_genes, number_of_genes_in_background, fdr, inputGenes),
@@ -367,7 +405,7 @@ enrichment_tables <- list(
   mutate(dataset = "N-glyco")
 )
 enrichment_tables <- lapply(enrichment_tables, as.data.frame)
-write.xlsx(enrichment_tables, file = "data/paper/submission2/supplementary_data/Supplementary_Data_6.xlsx")
+write.xlsx(enrichment_tables, file = "data/paper/revision1/supplementary_data/Supplementary_Data_8.xlsx")
 ```
 
 ```{r}

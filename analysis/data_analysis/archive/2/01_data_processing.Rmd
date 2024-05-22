@@ -1,0 +1,615 @@
+---
+title: "Initial processing of glycoproteomics datasets"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "/Users/burtsche/Documents/01_repos/Glycoproteomics/")
+```
+
+## Packages
+
+```{r, message=F, warning =F, include=}
+library(tidyverse)
+library(ggplot2); theme_set(cowplot::theme_cowplot(font_size = 15))
+library("reshape2")
+library(ggrepel)
+library(knitr)
+library(ggvenn)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+```
+
+# Functions
+
+```{r}
+
+glyco_psm_processing <- function(path, dataset, species){
+  
+  psm <- read_tsv(path, col_types = cols()) %>% 
+    mutate(dataset = dataset, species = species)
+  
+  # deal wit column name bugs
+  colnames(psm) <- gsub(" ", "\\.", colnames(psm))
+
+  psm <- psm %>%
+    mutate(
+      modification = ifelse(grepl("N\\(", Assigned.Modifications), "glycosylation", "unmodified"),
+      glycosylation = str_extract_all(Assigned.Modifications, "\\d+N"),
+      n_position = as.numeric(str_extract(glycosylation, "\\d+")) + Protein.Start - 1,
+      # add mass bin information
+      mass = str_extract(Observed.Modifications, " .+$"),
+      mass = as.numeric(str_replace(mass, " % ", "")),
+      # bin = cut_interval(mass, n = 10),
+      bin = cut(mass, breaks = seq(0, plyr::round_any(max(mass), 500), 500))
+      # add glycan group information
+    ) %>% 
+    separate(Observed.Modifications, into = c("glycan_content", "modification_mass"), sep = " % ", remove = F) %>%
+    separate(glycan_content, into = c("hexnac", "hexnac_content", "hex", "hex_content", "end"), sep = "\\(|\\)", extra = "merge", remove = FALSE) %>%
+    mutate(
+      hexnac_content = as.numeric(hexnac_content),
+      hex_content = as.numeric(hex_content),
+      end = ifelse(is.na(end), "", end)
+    ) %>%
+    mutate(glycan_type = case_when(
+      grepl("Phospho", glycan_content) ~ "phospho",
+      grepl("NeuAc|NeuGc", glycan_content) ~ "sialylated",
+      grepl("Fuc", glycan_content) ~ "fucosylated",
+      hexnac_content == 2 & hex_content > 3 & end == "" ~ "high mannose",
+      hexnac_content == 2 & hex_content %in% 1:3 & end == "" ~ "paucimannose",
+      hexnac_content <= 2 & hex == "" & end == "" ~ "small",
+      TRUE ~ "complex/hybrid"
+    ))
+  
+  
+  psm_glyco <- psm %>% 
+    filter(modification == "glycosylation")
+  
+  summary <- data.frame(n_proteins = length(unique(psm_glyco$Protein.ID)),
+                        n_peptides = nrow(distinct(psm_glyco, Protein.ID, Modified.Peptide)),
+                        n_sites = nrow(distinct(psm_glyco, Protein.ID, n_position)),
+                        dataset = dataset,
+                        species = species
+                        )
+  
+  
+  
+  res <- list("psm" = psm_glyco,"summary" = summary, "psm_total" = psm)
+
+}
+
+```
+
+#1. N-glyco
+
+## Optimization data 
+
+### lysis method
+
+```{r, eval =F}
+psm_lysis_methods <- glyco_psm_processing("data/paper/psm_files/labelfree/lysis_methods/230403_HEK_SDS_psm.tsv", 
+                                          "LF_HEK_lysismethods", 
+                                          "HEK_lysismethods")
+
+psm <- psm_lysis_methods$psm %>%
+  as.data.frame() %>%
+  mutate(
+    expID = str_extract(Spectrum, "HEK.+[lysis, IPA, SDS]"),
+    lysis_method = ifelse(grepl("SDS", expID), "SDS\nlysis", "adapted\nlysis")
+  ) %>%
+  group_by(lysis_method) %>%
+  mutate(replicate = as.integer(as.factor(expID))) %>%
+  mutate(glycosylation = as.character(glycosylation)) %>% 
+  select(-expID)
+
+psm_total <- psm_lysis_methods$psm_total %>%
+  as.data.frame() %>%
+    mutate(
+    expID = str_extract(Spectrum, "HEK.+[lysis, IPA, SDS]"),
+    lysis_method = ifelse(grepl("SDS", expID), "SDS\nlysis", "adapted\nlysis")
+  ) %>%
+  group_by(lysis_method) %>%
+  mutate(replicate = as.integer(as.factor(expID))) %>%
+  mutate(glycosylation = as.character(glycosylation)) %>% 
+  select(-expID)
+
+summary <- psm %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide),
+         siteID = paste0(Protein.ID, "_", n_position)) %>%
+  select(Protein.ID, pepID, siteID)%>%
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(pepID),
+    n_glycosites = n_distinct(siteID)
+  ) %>%
+  mutate(dataset = "LF_HEK_lysismethods")
+
+res_lysismethods <- list("psm" = psm, "summary" = summary, "psm_total" = psm_total)
+save(res_lysismethods, file = paste0("data/paper/processed/", Sys.Date(),"_HEK_lf_lysismethods_3rep_psm_processed.RData"))
+```
+
+### scan ranges
+
+```{r, eval =F}
+psm_scan_ranges <- glyco_psm_processing("data/paper/psm_files/labelfree/scan_ranges/HeLa_scan_range_good_psm.tsv", "LF_HeLa_scanranges", "HeLa_scanranges")
+
+psm_scan_ranges$psm %>%  
+  mutate(scan_range = str_extract(Spectrum, "HeLa_1p5mg_glyco_\\d+-\\d+"), 
+         replicate = str_extract(Spectrum, "HeLa_1p5mg_glyco_\\d+-\\d+_\\d"),
+         replicate = ifelse(is.na(replicate), "1", str_replace(replicate, "HeLa_1p5mg_glyco_\\d+-\\d+_", ""))) %>%
+  group_by(scan_range, replicate) %>% 
+  count()
+
+psm_scan_ranges$psm_total %>%  
+    mutate(scan_range = str_extract(Spectrum, "HeLa_1p5mg_glyco_\\d+-\\d+"), 
+         replicate = str_extract(Spectrum, "HeLa_1p5mg_glyco_\\d+-\\d+_\\d"),
+         replicate = ifelse(is.na(replicate), "1", str_replace(replicate, "HeLa_1p5mg_glyco_\\d+-\\d+_", ""))) %>%
+  group_by(scan_range, modification) %>% 
+  count()
+
+psm <- psm_scan_ranges$psm %>%
+  as.data.frame() %>%
+  mutate(glycosylation = as.character(glycosylation)) %>%
+  mutate(
+    scan_range = str_extract(Spectrum, "HeLa_1p5mg_glyco_\\d+-\\d+"),
+    replicate = str_extract(Spectrum, "HeLa_1p5mg_glyco_\\d+-\\d+_\\d"),
+    replicate = ifelse(is.na(replicate), "1", str_replace(replicate, "HeLa_1p5mg_glyco_\\d+-\\d+_", ""))
+  )
+
+psm_total <- psm_scan_ranges$psm_total %>%
+  as.data.frame() %>%
+  mutate(glycosylation = as.character(glycosylation)) %>% 
+  mutate(
+    scan_range = str_extract(Spectrum, "HeLa_1p5mg_glyco_\\d+-\\d+"),
+    replicate = str_extract(Spectrum, "HeLa_1p5mg_glyco_\\d+-\\d+_\\d"),
+    replicate = ifelse(is.na(replicate), "1", str_replace(replicate, "HeLa_1p5mg_glyco_\\d+-\\d+_", ""))
+  )
+
+summary <- psm %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide),
+         siteID = paste0(Protein.ID, "_", n_position)) %>%
+  group_by(scan_range, replicate) %>% 
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(pepID),
+    n_glycosites = n_distinct(siteID)
+  ) %>%
+  mutate(dataset = "LF_HeLa_scanranges")
+
+res_scanranges <- list("psm" = psm, "summary" = summary, "psm_total" = psm_total)
+save(res_scanranges, file =paste0("data/paper/processed/", Sys.Date(),"_Hela_lf_scanranges_3rep_psm_processed.RData"))
+```
+
+##LF N-glyco Single-shot mouse brain dataset
+
+```{r, eval =F}
+psm_species <- glyco_psm_processing("data/paper/psm_files/labelfree/20230320_Mouse_brain_singleshots_3rep_psm.tsv", 
+                                    "LF_brains_singleshot", 
+                                    "mouse\nbrain_ss")
+psm <- psm_species$psm %>%
+  as.data.frame() %>%
+  mutate(glycosylation = as.character(glycosylation))
+
+psm_total <- psm_species$psm_total %>%
+  as.data.frame() %>%
+  mutate(glycosylation = as.character(glycosylation))
+
+summary <- psm %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide),
+         siteID = paste0(Protein.ID, "_", n_position)) %>%
+  select(Protein.ID, pepID, siteID)%>%
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(pepID),
+    n_glycosites = n_distinct(siteID)
+  ) %>%
+  mutate(dataset = "LF_brains_singleshot")
+
+res_singleshot <- list("psm" = psm, "summary" = summary, "psm_total" = psm_total)
+
+save(res_singleshot, file =paste0("data/paper/processed/", Sys.Date(),"_Mouse_brain_lf_singleshot_psm_processed.RData"))
+```
+
+## LF singleshots 3best runs N-glyco Human cell lines
+
+```{r, eval=F}
+psm_species <- glyco_psm_processing("data/paper/psm_files/labelfree/HEK_HeLa_glyco_3best_largedatabase_psm.tsv", "mixed", "mixed")
+
+# map file name to metadata info 
+mapping_temp <- data.frame(
+  data = c("HeLa_R1", "HeLa_R2", "HeLa_R3", "HEK_R1", "HEK_R2", "HEK_R3"),
+  ID = c(
+    "Lara_220801_S3233_CP_Glyco_HeLa_HCD40", 
+    "Lara_220722_S3229_CP_HeLa_glyco_5mg_PBA", 
+    "Lara_220801_S3233_CP_Glyco_HeLa_steppedHCD",
+    "Lara_220802_S3233_CP_Glyco_HEK_HCD40", 
+    "Lara_220818_S3233_CP_HEK_noMg_40ACN", 
+    "Lara_220818_S3233_CP_HEK_noMg_40ACN_IPA"
+  ),
+  species = "human\ncell line"
+)
+
+psm <- psm_species$psm %>%
+  as.data.frame() %>%
+  mutate(dataset = str_extract(Spectrum, "Lara[^\\.]*")) %>%
+  select(-species) %>%
+  left_join(mapping_temp, by = c("dataset" = "ID")) %>%
+  mutate(glycosylation = as.character(glycosylation))
+
+psm_total <- psm_species$psm_total %>%
+  as.data.frame() %>%
+  mutate(dataset = str_extract(Spectrum, "Lara[^\\.]*")) %>%
+  select(-species) %>%
+  left_join(mapping_temp, by = c("dataset" = "ID"))
+
+summary <- psm %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide),
+         siteID = paste0(Protein.ID, "_", n_position)) %>%
+  select(data, Protein.ID, pepID, siteID)%>%
+  group_by(data) %>%
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(pepID),
+    n_glycosites = n_distinct(siteID)
+  ) %>%
+  mutate(dataset = data, species = str_replace(data, "_R\\d$", ""))
+
+res_celllines <- list("psm" = psm, "summary" = summary, "psm_total" = psm_total)
+
+save(res_celllines, file =paste0("data/paper/processed/",Sys.Date(),"_humancelllines_lf_3best_psm_processed.RData"))
+  
+```
+
+## LF N-glyco human cell lines fractionated
+
+```{r, eval =F}
+res_HEK_lf_PGC <- glyco_psm_processing("data/paper/psm_files/labelfree/HEK_PGC_glyco_psm.tsv", "HEK_lf_PGC_frac", "human")
+save(res_HEK_lf_PGC, file = paste0("data/paper/processed/",Sys.Date(), "_HEK_lf_PGC_psm_processed.RData"))
+
+res_HeLa_lf_PGC <- glyco_psm_processing("data/paper/psm_files/labelfree/HeLa_glyco_psm.tsv", "HeLa_lf_PGC_frac", "human")
+save(res_HeLa_lf_PGC, file = paste0("data/paper/processed/",Sys.Date(), "_HeLa_lf_PGC_psm_processed.RData"))
+```
+
+## LF N-glyco Mouse brain tissue fractionated
+
+
+```{r, eval=F}
+psm_species <- glyco_psm_processing("data/paper/psm_files/labelfree/Mouse_brain_allfiles_final_psm.tsv", "LF_brains", "mouse\nbrain")
+
+psm <- psm_species$psm %>%
+  as.data.frame() %>%
+  mutate(fraction = str_extract(Spectrum, "F\\d+"), data = "mouse brain fractionated") %>%
+  mutate(fraction = factor(fraction, levels = c(paste0("F", seq(1:96)))),
+    glycosylation = as.character(glycosylation))
+
+psm_total <- psm_species$psm_total %>%
+  as.data.frame() %>%
+  mutate(fraction = str_extract(Spectrum, "F\\d+"), data = "mouse brain fractionated") %>%
+  mutate(fraction = factor(fraction, levels = c(paste0("F", seq(1:96)))))
+
+summary <- psm %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide),
+         siteID = paste0(Protein.ID, "_", n_position)) %>%
+  select(data, Protein.ID, pepID, siteID)%>%
+  group_by(data) %>%
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(pepID),
+    n_glycosites = n_distinct(siteID)
+  ) %>%
+  mutate(dataset = data, species = str_replace(data, "_R\\d$", ""))
+
+res_mousebrain_fractionated_Nglyco <- list("psm" = psm, "summary" = summary, "psm_total" = psm_total)
+
+save(res_mousebrain_fractionated_Nglyco, file = paste0("data/paper/processed/",Sys.Date(),"_mousebrain_fractionated_Nglyco_psm_processed.RData"))
+  
+```
+
+## LF N-glyco Mouse brain tissue fractionated - stepped HCD
+
+```{r, eval=F}
+#psm_species <- glyco_psm_processing("data/brain/Mouse_brain_glyco_allfiles_filtered_final.tsv", "LF_brains", "mouse\nbrain")
+psm_species <- glyco_psm_processing("data/Brain_steppedHCD_psm.tsv", "LF_brains_steppedHCD", "mouse\nbrain")
+
+psm <- psm_species$psm %>%
+  as.data.frame() %>%
+  mutate( glycosylation = as.character(glycosylation))
+ # write_tsv(t, "data/paper/top_runs/HEK_HeLa_glyco_3best_runs_psm_processed.tsv")
+
+psm_total <- psm_species$psm_total %>%
+  as.data.frame() 
+
+summary <- psm %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications),
+         siteID = paste0(Protein.ID, "_", n_position)) %>%
+  select(Protein.ID, pepID, siteID)%>%
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(pepID),
+    n_glycosites = n_distinct(siteID)
+  )
+
+res_mousebrain_steppedHCD <- list("psm" = psm, "summary" = summary, "psm_total" = psm_total)
+
+
+save(res_mousebrain_steppedHCD, file = paste0("data/paper/processed/",Sys.Date(),"_res_mousebrain_steppedHCD_psm_processed.RData"))
+  
+```
+
+### Combine
+
+```{r}
+load("data/paper/processed/2024-01-08_res_mousebrain_steppedHCD_psm_processed.RData")
+load("data/paper/processed/2024-01-08_mousebrain_fractionated_Nglyco_psm_processed.RData")
+
+psm_mousebrain_combined <- bind_rows(
+  res_mousebrain_steppedHCD$psm,
+  res_mousebrain_fractionated_Nglyco$psm
+)
+
+psm_mousebrain_combined$species %>%  unique
+
+
+psm_mousebrain_combined_total <- bind_rows(
+  res_mousebrain_steppedHCD$psm_total %>%  mutate(glycosylation = as.character(glycosylation)),
+  res_mousebrain_fractionated_Nglyco$psm_total %>%  mutate(glycosylation = as.character(glycosylation))
+)
+
+psm_mousebrain_combined_total$species %>%  unique
+
+load("data/paper/processed/2024-01-08_humancelllines_lf_3best_psm_processed.RData")
+load("data/paper/processed/2024-01-08_HEK_lf_PGC_psm_processed.RData")
+load("data/paper/processed/2024-01-08_HeLa_lf_PGC_psm_processed.RData")
+
+
+psm_human_combined <- bind_rows(
+  res_HEK_lf_PGC$psm%>%  mutate(glycosylation = as.character(glycosylation)), res_HeLa_lf_PGC$psm%>%  mutate(glycosylation = as.character(glycosylation)), res_celllines$psm%>%  mutate(glycosylation = as.character(glycosylation))
+) %>%  
+  mutate(species = "human\ncell line")
+
+psm_human_combined$species %>%  unique
+
+psm_human_combined_total <- bind_rows(
+  res_HEK_lf_PGC$psm_total%>%  mutate(glycosylation = as.character(glycosylation)), 
+  res_HeLa_lf_PGC$psm_total%>%  mutate(glycosylation = as.character(glycosylation)),
+  res_celllines$psm_total%>%  mutate(glycosylation = as.character(glycosylation))
+) %>%  
+  mutate(species = "human\ncell line")
+
+psm_human_combined_total$species %>%  unique
+
+res_species <- list()
+
+res_species$psm <- bind_rows(
+  psm_human_combined, psm_mousebrain_combined
+)
+
+res_species$psm_total <- bind_rows(
+  psm_human_combined_total, psm_mousebrain_combined_total
+)
+
+res_species$psm$species %>%  unique
+
+save(res_species,
+     file = paste0(Sys.Date(), "_combined_lf_data_human_and_mouse.RData"))
+
+```
+
+## Quant N-glyco microbiome mouse brain
+
+```{r, eval = F}
+psm_species <- glyco_psm_processing("data/paper/psm_files/TMT/Mouse_brain_GF_Mono_8c_glyco_1protpergene_psm.tsv", 
+                                    "TMT_microbiome_mousebrain_Nglyco", 
+                                    "microbiome_mouse\nbrain_Nglyco")
+
+
+psm <- psm_species$psm %>%
+  as.data.frame() %>%
+  mutate(glycosylation = as.character(glycosylation))
+
+psm_total <- psm_species$psm_total %>%
+  as.data.frame() %>%
+  mutate(glycosylation = as.character(glycosylation))
+
+summary <- psm %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide),
+         siteID = paste0(Protein.ID, "_", n_position)) %>%
+  select(Protein.ID, pepID, siteID)%>%
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(pepID),
+    n_glycosites = n_distinct(siteID)
+  ) %>%
+  mutate(dataset = "microbiome_mouse\nbrain_Nglyco")
+
+res_microbiome_mousebrain_Nglyco <- list("psm" = psm, "summary" = summary, "psm_total" = psm_total)
+
+save(res_microbiome_mousebrain_Nglyco, file =paste0("data/paper/processed/",Sys.Date(),"_microbiome_mousebrain_Nglyco_psm_processed.RData"))
+```
+
+#2. O-glyco
+
+## LF frac mousebrain
+
+```{r, eval =F}
+psm <- read_csv("data/paper/psm_files/TMT/Mouse_brain_allF_O-glyco_filtered.csv")%>% 
+    mutate(dataset = "O-glycosylation", species = "mouse\nbrain")
+
+  # deal wit column name bugs
+  colnames(psm) <- gsub(" ", "\\.", colnames(psm))
+
+  psm_glyco <- psm %>%
+    # remove N-glycosylation
+    filter(!grepl("N.{1}T|N.{1}S", Peptide)) %>%
+    filter(!(grepl("N.$", Peptide) & Next.AA %in% c("S", "T"))) %>%
+    filter(!is.na(Observed.Modifications) & Observed.Modifications != "no target matches") %>%
+    mutate(
+      glycosylation = str_extract_all(Assigned.Modifications, "\\d+N"),
+      n_position = as.numeric(str_extract(glycosylation, "\\d+")) + Protein.Start - 1,
+      # add mass bin information
+      mass = str_extract(Observed.Modifications, " .+$"),
+      mass = as.numeric(str_replace(mass, " % ", "")),
+      # bin = cut_interval(mass, n = 10),
+      bin = cut(mass, breaks = seq(100, plyr::round_any(max(mass), 500), 100))
+      # add glycan group information
+    ) %>%
+    separate(Observed.Modifications, into = c("glycan_content", "modification_mass"), sep = " % ", remove = F) %>%
+    separate(glycan_content, into = c("hexnac", "hexnac_content", "hex", "hex_content", "end"), sep = "\\(|\\)", extra = "merge", remove = FALSE) %>%
+    mutate(
+      hexnac_content = as.numeric(hexnac_content),
+      hex_content = as.numeric(hex_content),
+      end = ifelse(is.na(end), "", end)
+    ) %>%
+    mutate(glycan_type = case_when(
+      grepl("Phospho", glycan_content) ~ "O-phospho",
+      grepl("NeuAc", glycan_content) ~ "O-sialylated",
+      grepl("Fuc", glycan_content) ~ "O-fucosylated",
+      grepl("Sulf", glycan_content) ~ "O-sulfated",
+      hexnac_content == 1 & hex == "" ~ "O-GlcNac",
+      hexnac_content %in% c("", 1, 2) & hex_content >= 1 & end == "" ~ "O-hexose",
+      TRUE ~ "O-hybrid"
+    )) %>% 
+    # mutate(
+    #   hexnac_content = as.numeric(hexnac_content),
+    #   hex_content = as.numeric(hex_content),
+    #   end = ifelse(is.na(end), "", end)
+    # ) %>%
+    # mutate(glycan_type = case_when(
+    #   grepl("Phospho", glycan_content) ~ "phospho",
+    #   grepl("NeuAc", glycan_content) ~ "sialylated",
+    #   grepl("Fuc", glycan_content) ~ "fucosylated",
+    #   grepl("Sulf", glycan_content) ~ "sulfated",
+    #   hexnac_content == 2 & hex_content > 3 & end == "" ~ "high mannose",
+    #   hexnac_content == 2 & hex_content %in% 1:3 & end == "" ~ "paucimannose",
+    #   hexnac_content <= 2 & hex == "" & end == "" ~ "small",
+    #   TRUE ~ "complex/hybrid"
+    # )) %>% 
+    select(-n_position)
+  
+
+  
+  summary <- psm_glyco %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications)) %>%
+  dplyr::select(Protein.ID, pepID)%>%
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(pepID)
+  ) %>% 
+    mutate(dataset = "O-glycosylation",
+                        species = "mouse\nbrain")
+  
+  
+  res_mousebrain_fractionated_Oglyco <- list("psm" = psm_glyco, "summary" = summary)
+
+ 
+save(res_mousebrain_fractionated_Oglyco, file = paste0("data/paper/processed/",Sys.Date(),"_mousebrain_fractionated_Oglyco_psm_processed.RData"))
+```
+
+## LF frac steppedHCD mousebrain
+
+```{r, eval =F}
+psm <- read_tsv("data/paper/psm_files/labelfree/steppedHCD_Oglyco_psm.tsv")%>% 
+    mutate(dataset = "O-glycosylation_steppedHCD", species = "mouse\nbrain")
+
+  # deal wit column name bugs
+  colnames(psm) <- gsub(" ", "\\.", colnames(psm))
+
+  psm_glyco <- psm %>%
+    # remove N-glycosylation
+    filter(!grepl("N.{1}T|N.{1}S", Peptide)) %>%
+    filter(!(grepl("N.$", Peptide) & Next.AA %in% c("S", "T"))) %>%
+    filter(!is.na(Observed.Modifications) & !is.na(Glycan.Score) & Observed.Modifications != "no target matches" & Observed.Modifications != "No Glycan Matched") %>%
+    mutate(
+      glycosylation = str_extract_all(Assigned.Modifications, "\\d+N"),
+      n_position = as.numeric(str_extract(glycosylation, "\\d+")) + Protein.Start - 1,
+      # add mass bin information
+      mass = str_extract(Observed.Modifications, " .+$"),
+      mass = as.numeric(str_replace(mass, " % ", "")),
+      # bin = cut_interval(mass, n = 10),
+      bin = cut(mass, breaks = seq(100, plyr::round_any(max(mass), 500), 100))
+      # add glycan group information
+    ) %>%
+    separate(Observed.Modifications, into = c("glycan_content", "modification_mass"), sep = " % ", remove = F) %>%
+    separate(glycan_content, into = c("hexnac", "hexnac_content", "hex", "hex_content", "end"), sep = "\\(|\\)", extra = "merge", remove = FALSE) %>%
+    mutate(
+      hexnac_content = as.numeric(hexnac_content),
+      hex_content = as.numeric(hex_content),
+      end = ifelse(is.na(end), "", end)
+    ) %>%
+    mutate(glycan_type = case_when(
+      grepl("Phospho", glycan_content) ~ "O-phospho",
+      grepl("NeuAc", glycan_content) ~ "O-sialylated",
+      grepl("Fuc", glycan_content) ~ "O-fucosylated",
+      grepl("Sulf", glycan_content) ~ "O-sulfated",
+      hexnac_content == 1 & hex == "" ~ "O-GlcNac",
+      hexnac_content %in% c("", 1, 2) & hex_content >= 1 & end == "" ~ "O-hexose",
+      TRUE ~ "O-hybrid"
+    )) %>% 
+    select(-n_position)
+  
+
+  
+  summary <- psm_glyco %>%
+  mutate(pepID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications)) %>%
+  dplyr::select(Protein.ID, pepID)%>%
+  summarise(
+    n_glycoproteins = n_distinct(Protein.ID),
+    n_glycopeptides = n_distinct(pepID)
+  ) %>% 
+    mutate(dataset = "O-glycosylation_steppedHCD",
+                        species = "mouse\nbrain")
+  
+  
+  res_mousebrain_fractionated_Oglyco_steppedHCD <- list("psm" = psm_glyco, "summary" = summary)
+
+ 
+save(res_mousebrain_fractionated_Oglyco_steppedHCD, file = paste0("data/paper/processed/",Sys.Date(),"_mousebrain_fractionated_steppedHCD_Oglyco_psm_processed.RData"))
+```
+
+### Combine
+
+```{r}
+load("data/paper/processed/2024-01-10_mousebrain_fractionated_Oglyco_psm_processed.RData")
+load("data/paper/processed/2024-01-10_mousebrain_fractionated_steppedHCD_Oglyco_psm_processed.RData")
+
+res_mousebrain_fractionated_Oglyco_combined <- list()
+
+res_mousebrain_fractionated_Oglyco_combined$psm <- ttt <-  bind_rows(
+  res_mousebrain_fractionated_Oglyco$psm,
+  res_mousebrain_fractionated_Oglyco_steppedHCD$psm
+)
+
+res_mousebrain_fractionated_Oglyco_combined$psm$species %>%  unique
+res_mousebrain_fractionated_Oglyco_combined$psm$dataset%>%  unique
+
+save(res_mousebrain_fractionated_Oglyco_combined, file = paste0("data/paper/processed/",Sys.Date(),"_mousebrain_fractionated_Oglyco_combined_psm_processed.RData"))
+```
+
