@@ -6,17 +6,3 @@ analysis/.DS_Store
 DQGlyco.Rproj
 .DS_Store
 README.html
-data/comparison_to_datasets/*.RData
-data/comparison_to_datasets/*.csv
-data/comparison_to_datasets/*.xlsx
-data/uniprot/*.RData
-data/supplementary_data/*xlsx
-data/supplementary_data/*pdf
-data/supplementary_data/*txt
-data/supplementary_data/pdf_plots/*
-data/site_level_results/*.RData
-data/psm_files/*
-data/processed/*.RData
-data/motifs/*.RData
-data/microbiome/*.RData
-data/enrichments/*.RData
