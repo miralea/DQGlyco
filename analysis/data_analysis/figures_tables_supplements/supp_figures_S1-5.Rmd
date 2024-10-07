@@ -69,7 +69,7 @@ setwd("/Users/burtsche/Documents/01_repos/Glycoproteomics")
 ```{r}
 locations_of_interest <-c("Nucleus", "Cytoplasm", "Mitochondrion", "Endoplasmic reticulum", "Golgi apparatus", "Lysosome", "Plasma membrane", "Extracellular")
 
-compartment_anno <- tt <- read_tsv("data/combined_loc_df.tsv")%>%
+compartment_anno <- tt <- read_tsv("comparison_to_datasets/combined_loc_df.tsv")%>%
   mutate(description = ifelse(grepl("Extracellular", description), "Extracellular", description)) %>% 
   filter(description %in% locations_of_interest) %>% 
   group_by(gene) %>%
@@ -99,7 +99,7 @@ compartment_anno <- compartment_anno %>%
 
 
 ```{r}
-list.files(path = "/Users/burtsche/Documents/01_repos/Glycoproteomics/data/paper/submission1/psm_files/labelfree/lysis_methods/immonium/", full.names = TRUE)%>%
+list.files(path = "psm/lysis_methods/immonium/", full.names = TRUE)%>%
   lapply(readr::read_tsv) %>% 
   purrr::map(. %>% select(title, `immonium mz`, `immonium int`)) %>% 
   bind_rows(.id = "sample")%>% 
@@ -121,7 +121,7 @@ list.files(path = "/Users/burtsche/Documents/01_repos/Glycoproteomics/data/paper
 ## B
 
 ```{r}
-load("data/2024-05-02_res_HEK_Hela_optimisation_psm_processed.RData")
+load("results/2024-05-02_res_HEK_Hela_optimisation_psm_processed.RData")
 
 res_HEK_Hela_optimisation$psm_total %>% 
   filter(experiment %in% c("SDS_lysis", "singleshot")) %>%  
@@ -139,10 +139,6 @@ res_HEK_Hela_optimisation$psm_total %>%
 
 ## C
 scan range rep 3 is weird
-
-```{r}
-#load("data/paper/revision1/processed/2024-01-08_Hela_lf_scanranges_3rep_psm_processed.RData")
-```
 
 ```{r}
 res_HEK_Hela_optimisation$psm_total %>% 
@@ -254,11 +250,11 @@ group_by(dataset) %>%
 
 ```{r}
 source("~/Documents/generic_functions.R")
-riley_msf_182 <- glyco_psm_processing(path = "data/AI-ETD_182glycans_psm.tsv", dataset = "riley_msfragger_182glycans", species = "moouse_brain" )
-riley_msf_1799 <- glyco_psm_processing(path = "data/AI_ETD_1799glycans_psm.tsv", dataset = "riley_msfragger_1799glycans", species = "moouse_brain" )
+riley_msf_182 <- glyco_psm_processing(path = "comparison_to_datasets/AI-ETD_182glycans_psm.tsv", dataset = "riley_msfragger_182glycans", species = "moouse_brain" )
+riley_msf_1799 <- glyco_psm_processing(path = "comparison_to_datasets/AI_ETD_1799glycans_psm.tsv", dataset = "riley_msfragger_1799glycans", species = "moouse_brain" )
 
-us_182 <- glyco_psm_processing(path = "data/Mouse_brain_182glycans_psm.tsv", dataset = "this_study_182glycans", species = "mouse_brain" )
-us_182_hcd <- glyco_psm_processing(path = "data/Brain_glyco_steppedHCD_182glycans_psm.tsv", dataset = "this_study_182glycans", species = "mouse_brain" )
+us_182 <- glyco_psm_processing(path = "psm/Mouse_brain_182glycans_psm.tsv", dataset = "this_study_182glycans", species = "mouse_brain" )
+us_182_hcd <- glyco_psm_processing(path = "psm/Brain_glyco_steppedHCD_182glycans_psm.tsv", dataset = "this_study_182glycans", species = "mouse_brain" )
 
 bind_rows(
   res_species$psm %>%  filter(grepl("mouse", species)),
@@ -288,7 +284,7 @@ bind_rows(
 ```{r}
 locations_of_interest <-c("Nucleus", "Cytoplasm", "Mitochondrion", "Endoplasmic reticulum", "Golgi apparatus", "Lysosome", "Plasma membrane", "Extracellular")
 
-compartment_anno <- tt <- read_tsv("data/combined_loc_df.tsv")%>%
+compartment_anno <- tt <- read_tsv("comparison_to_datasets/combined_loc_df.tsv")%>%
   mutate(description = ifelse(grepl("Extracellular", description), "Extracellular", description)) %>% 
   filter(description %in% locations_of_interest) %>% 
   group_by(gene) %>%
@@ -330,7 +326,7 @@ res_species$psm %>%
 ```{r}
 # load( "data/paper/revision1/processed/2024-01-08_Mouse_brain_lf_singleshot_psm_processed.RData")
 # load("data/paper/revision1/processed/2024-01-08_combined_lf_data_human_and_mouse.RData")
-load("data/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
+load("results/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
 tt <- bind_rows(
   "single-shot" = res_singleshot_mousebrain$psm %>%  filter(grepl("mouse", species)) %>%  mutate(replicate =as.character(replicate)),
   "PGC fractionation" = res_species$psm %>%  filter(grepl("mouse", species)),
@@ -501,7 +497,7 @@ ER_notanno_mM %>%
 ## D
 
 ```{r}
-load("data/paper/revision1/results/2024-01-18_df_Nglyco_anno_subcell.RData")
+load("results/2024-01-18_df_Nglyco_anno_subcell.RData")
 
 df_Nglyco_anno_subcell %>% 
   mutate(description = factor(description, levels = locations_of_interest)) %>% 
@@ -636,8 +632,8 @@ rm(intracell_org_genes, membrane_genes, micro_annotation, ER_NvsO_string)
 ## H
 
 ```{r}
-diag_ions <- read_tsv("data/dataset01.diagnosticIons_O.tsv")
-load("/Users/burtsche/Documents/01_repos/Glycoproteomics/results/submission1/2023-03-01res_microbiome_mousebrain_Oglyco.RData")
+diag_ions <- read_tsv("diagnostic_ions/dataset01.diagnosticIons_O.tsv")
+load("results/2023-03-01res_microbiome_mousebrain_Oglyco.RData")
 
 tt <- diag_ions %>% 
   select(Peptide, matches("144\\.06"), matches("138\\.05"), matches("168")) 
@@ -664,7 +660,7 @@ res_microbiome_mousebrain_Oglyco$psm %>%
 ## I
 
 ```{r}
-diag_ions <- read_tsv("data/dataset01.diagnosticIons.tsv")
+diag_ions <- read_tsv("diagnostic_ions/dataset01.diagnosticIons.tsv")
 load("results/2024-04-29_res_microbiome_mousebrain_Nglyco.RData")
 
 tt <- diag_ions %>% 
@@ -693,7 +689,7 @@ res_microbiome_mousebrain_Nglyco$psm %>%
 
 
 ```{r}
-riley_glycopsm <- readxl::read_excel("data/paper/submission1/comparison_to_datasets/riley_etal_glycopsms.xlsx", sheet = 2) %>%
+riley_glycopsm <- readxl::read_excel("comparison_to_datasets/riley_etal_glycopsms.xlsx", sheet = 2) %>%
   mutate(glycan_content = Glycans) %>%
   separate(glycan_content, into = c("hexnac", "hexnac_content", "hex", "hex_content", "end"), sep = "\\(|\\)", extra = "merge", remove = FALSE) %>%
   mutate(
@@ -877,7 +873,6 @@ res_species$psm %>%
   group_by(glycan_type) %>%  
   count()  %>% 
   ungroup() %>% 
-  mutate(n_all = sum(n)) %>% 
   group_by(glycan_type) %>%  
   mutate(freq = n/n_all*100) %>% 
   mutate(glycan_type = factor(glycan_type, levels = order)) %>% 
@@ -932,7 +927,7 @@ res_species$psm %>%
 ## K
 
 ```{r}
-load("data/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
+load("results/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
 res_species$psm %>% 
   mutate(model_system = str_extract(Spectrum,"HEK|HeLa")) %>% 
   mutate(model_system =ifelse(is.na(model_system), "mouse\nbrain", model_system)) %>% 
@@ -957,7 +952,7 @@ bind_rows(res_singleshot_mousebrain$psm %>%
 ## tmp
 
 ```{r}
-load("data/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
+load("results/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
 order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
 res_species$psm %>% 
   mutate(model_system = str_extract(Spectrum,"HEK|HeLa")) %>% 
@@ -1167,7 +1162,7 @@ res_mousebrain_fractionated_Oglyco_combined$psm %>%
 ## E
 
 ```{r}
-load("data/2024-05-06_mousebrain_fractionated_Oglyco_combined_psm_processed.RData")
+load("results/2024-05-06_mousebrain_fractionated_Oglyco_combined_psm_processed.RData")
 
 pepwith1 <- res_mousebrain_fractionated_Oglyco_combined$psm %>% 
   distinct(Protein.ID, Peptide, glycan_content) %>% 

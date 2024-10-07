@@ -1,0 +1,655 @@
+---
+title: "HEK293 2FF treatment analysis"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "~/Documents/01_repos/Glycoproteomics/")
+```
+
+```{r}
+setwd("~/Documents/01_repos/Glycoproteomics/")
+```
+
+
+## Packages
+
+```{r, message=F, warning =F, include=}
+library(tidyverse)
+library(ggplot2); theme_set(cowplot::theme_cowplot(font_size = 15))
+library("reshape2")
+library(ggrepel)
+library(knitr)
+library(Biostrings)
+library(ComplexHeatmap)
+library(viridis)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+
+source("~/Documents/generic_functions.R")
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+options(ggplot2.discrete.fill= c("orange3", "darkslateblue", "darkred", "darkgreen", "darkgrey", "darkviolet"))
+
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", "#ffe300ff","#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+
+order_O <- c("O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+pal_O <- c("lightgrey",  "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", '#a65628ff',"#f781bfff")
+names(pal_O) <- c("FP", "O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+tilted <-  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1))
+blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+
+# 1. Data
+
+```{r}
+res_2FF_timecourse <- glyco_psm_processing(
+  "data/2FF_timecourse_glyco_psm.tsv",
+  "2FF_timecourse_glyco",
+  "HEK293F",
+  version = "20",
+  qvalue_cutoff = 0.05,
+  purity_cutoff = 0.5
+)
+
+res_2FF_timecourse$FP <- read_tsv(here::here("data/2FF_timecourse_FP_protein.tsv"))
+colnames(res_2FF_timecourse$FP) <- gsub(" ", "\\.", colnames(res_2FF_timecourse$FP))
+res_2FF_timecourse$FP <- res_2FF_timecourse$FP %>%
+  filter(grepl("Homo", Organism) & !(grepl("contam", Protein)))
+
+res_2FF_timecourse$TMT_info <- data.frame(
+  sample = c(
+    "sample-01", "sample-02", "sample-03", "sample-04", "sample-05", "sample-06", "sample-07", "sample-08", "sample-09",
+    "sample-10", "sample-11", "sample-12", "sample-13", "sample-14", "sample-15", "sample-16", "sample-17", "sample-18"
+  ),
+  channel = c(
+    "channel_126", "channel_127N", "channel_127C", "channel_128N", "channel_128C", "channel_129N", "channel_129C", "channel_130N", "channel_130C",
+    "channel_131N", "channel_131C", "channel_132N", "channel_132C", "channel_133N", "channel_133C", "channel_134N", "channel_134C", "channel_135N"
+  ),
+  condition = c(
+    "DMSO", rep(c("2-Fluorofucose", "DMSO"), 4),
+    "DMSO", rep(c("2-Fluorofucose", "DMSO"), 4)
+  ),
+  timepoint = c(
+    "0h", rep("8h", 2), rep("24h", 2), rep("48h", 2), rep("72h", 2)
+  ),
+  replicate = c(
+    rep("rep1", 9), rep("rep2", 9)
+  )
+)
+```
+
+# 2. Preprocessing
+
+```{r}
+res_2FF_timecourse$psm_filtered <- tt <- res_2FF_timecourse$psm %>%
+  select(Protein.ID, Gene, Peptide, Modified.Peptide, Observed.Modifications, n_position, glycan_type, Gene, matches("sample")) %>%
+  mutate(ID = paste0(Protein.ID, "_", Gene, "_", Modified.Peptide, "_", Observed.Modifications, "_", glycan_type, "_", n_position)) %>%
+  group_by(ID) %>%
+  mutate(psm_id = row_number()) %>%
+  ungroup() %>%
+  melt(
+    variable.name = "sample",
+    value.name = "quant",
+    id.vars = c("Protein.ID", "Gene", "Peptide", "Modified.Peptide", "Observed.Modifications", "n_position", "glycan_type", "psm_id")
+  ) %>%
+  # add TMT info
+  inner_join(
+    res_2FF_timecourse$TMT_info,
+    by = c("sample"),
+    multiple = "all"
+  ) %>%
+  mutate(
+    ID = paste0(Protein.ID, "_", Gene, "_", Modified.Peptide, "_", Observed.Modifications, "_", glycan_type, "_", n_position),
+    quant = as.numeric(quant)
+  ) %>%
+  # remove non quant rows
+  filter(quant > 0 & !is.na(quant)) %>%
+  # remove psms with incomplete quant
+  group_by(ID, psm_id) %>%
+  mutate(n_datapoints = n())
+
+res_2FF_timecourse$psm_filtered %>%
+  ggplot(aes(x = n_datapoints)) +
+  geom_histogram(binwidth = 1) +
+  labs(subtitle = "Glyco - missing value overview")
+```
+
+# 3. Normalisation
+
+```{r}
+res_2FF_timecourse$psm_normalised <- tt <- res_2FF_timecourse$psm_filtered %>%
+  filter(n_datapoints == 18) %>%
+  # aggregate psms
+  group_by(ID, sample, condition, timepoint, replicate) %>%
+  summarise(quant = sum(quant)) %>%
+  separate(ID, into = c("Protein.ID", "Gene", "Modified.Peptide", "Observed.Modifications", "glycan_type", "n_position"), sep = "_", remove = F) %>%
+  ungroup() %>%
+  group_modify(~ tibble(normalisation_melted_ptm(.))) %>%
+  ungroup() %>%
+  mutate(timepoint = factor(timepoint, levels = c("0h", "8h", "24h", "48h", "72h")))
+
+res_2FF_timecourse$FP_normalised <- res_2FF_timecourse$FP %>%
+  select(Protein.ID, Gene, matches("channel")) %>%
+  melt(variable.name = "channel", value.name = "quant", id.vars = c("Protein.ID", "Gene")) %>%
+  # add TMT info
+  inner_join(
+    res_2FF_timecourse$TMT_info,
+    by = "channel"
+  ) %>%
+  mutate(
+    ID = Protein.ID,
+  ) %>%
+  filter(!is.na(Protein.ID) & !is.na(quant) & quant > 0) %>%
+  ungroup() %>%
+  group_modify(~ tibble(normalisation_melted_ptm(.))) %>%
+  mutate(timepoint = factor(timepoint, levels = c("0h", "8h", "24h", "48h", "72h")))
+
+ggplot(
+  res_2FF_timecourse$psm_normalised,
+  aes(x = timepoint, y = log2(quant), colour = condition, group = paste0(replicate, timepoint, condition))
+) +
+  geom_boxplot() +
+  labs(y = "log2 intensity", subtitle = "glyco")
+
+ggplot(
+  res_2FF_timecourse$psm_normalised,
+  aes(x = timepoint, y = quant_norm, colour = condition, group = paste0(replicate, timepoint, condition))
+) +
+  geom_boxplot() +
+  labs(y = "log2 norm intensity", subtitle = "glyco")
+
+ggplot(
+  res_2FF_timecourse$FP_normalised,
+  aes(x = timepoint, y = log2(quant), colour = condition, group = paste0(replicate, timepoint, condition))
+) +
+  geom_boxplot() +
+  labs(y = "log2 intensity", subtitle = "FP")
+
+ggplot(
+  res_2FF_timecourse$FP_normalised,
+  aes(x = timepoint, y = quant_norm, colour = condition, group = paste0(replicate, timepoint, condition))
+) +
+  geom_boxplot() +
+  labs(y = "log2 norm intensity", subtitle = "FP")
+```
+
+#4. PCA
+
+```{r}
+pca_plot <- function(data_matrix, x, y, fx, fy, l, u, pal, title) {
+  m <- data_matrix
+  n_obs <- nrow(m)
+
+  m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+    order(decreasing = T) %>%
+    head((n_obs / 100) * 10), ]
+
+  pca <- prcomp(t(m))
+
+  data <- pca$x %>%
+    as.data.frame() %>%
+    rownames_to_column("sample") %>%
+    select(sample, x = {{ x }}, y = {{ y }}) %>%
+    separate(sample, c("timepoint", "condition", "replicate"), sep = "_", remove = F) %>%
+    mutate(timepoint = factor(timepoint, levels = c("0h", "8h", "24h", "48h", "72h")))
+
+  var <- (pca$sdev)^2 / sum(pca$sdev^2) * 100
+  vx <- as.numeric(str_extract(as.character({{ x }}), "\\d"))
+  vy <- as.numeric(str_extract(as.character({{ y }}), "\\d"))
+
+  p <- data %>%
+    ggplot(aes(x = x * fx, y = y * fy, fill = condition, shape = timepoint)) +
+    geom_hline(yintercept = 0, colour = "lightgrey", linetype = 3) +
+    geom_vline(xintercept = 0, colour = "lightgrey", linetype = 3) +
+    geom_point(size = 4, stroke = 0.5, colour = "black") +
+    scale_fill_manual(values = pal) +
+    scale_shape_manual(values = c(21, 24, 22, 23, 25)) +
+    cowplot::panel_border() +
+    coord_fixed() +
+    lims(x = c(l, u), y = c(l, u)) +
+    # guides(fill = "none", shape = "none") +
+    labs(
+      x = paste0(as.character({{ x }}), " (", round(var[vx], digits = 1), "%)"),
+      y = paste0(as.character({{ y }}), " (", round(var[vy], digits = 1), "%)"),
+      subtitle = title
+    )
+
+  plot(p)
+}
+```
+
+
+```{r}
+m <- res_2FF_timecourse$psm_normalised %>%
+  mutate(sample = paste(timepoint, condition, replicate, sep = "_")) %>%
+  dcast(
+    ID ~ sample,
+    value.var = "quant_norm", fill = NA
+  ) %>%
+  drop_na() %>%
+  column_to_rownames("ID") %>%
+  as.matrix()
+
+m_fp <- res_2FF_timecourse$FP_normalised %>%
+  mutate(sample = paste(timepoint, condition, replicate, sep = "_")) %>%
+  dcast(
+    ID ~ sample,
+    value.var = "quant_norm", fill = NA
+  ) %>%
+  drop_na() %>%
+  column_to_rownames("ID") %>%
+  as.matrix()
+
+pca_plot(m, "PC1", "PC2", 1, 1, -50, 50, pal = c("grey", "darkcyan"), "glyco")
+pca_plot(m, "PC2", "PC3", 1, 1, -30, 30, pal = c("grey", "darkcyan"), "glyco")
+
+pca_plot(m_fp, "PC1", "PC2", 1, 1, -20, 20, pal = c("grey", "darkcyan"), "FP") 
+pca_plot(m_fp, "PC3", "PC4", 1, 1, -20, 20, pal = c("grey", "darkcyan"), "FP")
+```
+
+# 5. Correlation 
+
+```{r}
+m <- res_2FF_timecourse$psm_normalised %>%
+  mutate(sample = paste(timepoint, condition, replicate, sep = "_")) %>%
+  dcast(
+    ID ~ sample,
+    value.var = "quant", fill = NA
+  ) %>%
+  drop_na() %>%
+  column_to_rownames("ID") %>%
+  as.matrix()
+
+m %>%
+  cor(method = "spearman") %>%
+  ComplexHeatmap::Heatmap(col = circlize::colorRamp2(c(1, 0.95, 0.9), c("darkred", "indianred", "grey95")))
+
+# check for biological rpelicates of the same condition
+m <- res_2FF_timecourse$psm_normalised %>%
+  filter(condition == "DMSO" & timepoint == "72h") %>% 
+  mutate(sample = paste(timepoint, condition, replicate, sep = "_")) %>%
+  dcast(
+    ID ~ sample,
+    value.var = "quant", fill = NA
+  ) %>%
+  drop_na() %>%
+  column_to_rownames("ID") %>%
+  as.matrix()
+
+m %>%
+  cor(method = "spearman") %>%  mean()
+```
+
+# 6. Correction
+
+```{r}
+corr_fit <- list()
+
+length(unique(res_2FF_timecourse$psm_normalised$Protein.ID))
+length(intersect(unique(res_2FF_timecourse$psm_normalised$Protein.ID), unique(res_2FF_timecourse$FP$Protein.ID)))
+
+corr_fit$data_fit <- res_2FF_timecourse$psm_normalised %>%
+  ungroup() %>%
+  # format phospho data
+  filter(quant_norm > 0) %>%
+  dplyr::select(Protein.ID, ID, sample, phospho_intensity = quant_norm) %>%
+  # add FP data
+  inner_join(
+    res_2FF_timecourse$FP_normalised %>%
+      ungroup() %>%
+      filter(quant_norm > 0) %>%
+      dplyr::select(Protein.ID, sample, total_intensity = quant_norm),
+    by = c("sample", "Protein.ID")
+  )
+
+corr_fit$data_lm <- corr_fit$data_fit %>%
+  filter(!is.na(phospho_intensity), !is.na(total_intensity)) %>%
+  nest(data = c(sample, phospho_intensity, total_intensity)) %>%
+  mutate(fit = purrr::map(data, function(df) lm(phospho_intensity ~ total_intensity, data = df)))
+
+corr_fit$data_lm <- corr_fit$data_lm %>%
+  mutate(model = purrr::map(fit, broom::tidy))
+
+corr_fit$data_lm <- corr_fit$data_lm %>%
+  mutate(phospho_pred = map(fit, predict))
+
+corr_fit$data_lm <- corr_fit$data_lm %>%
+  dplyr::select(-fit) %>%
+  unnest(c(data, phospho_pred))
+
+corr_fit$data_lm <- corr_fit$data_lm %>%
+  dplyr::select(-model) %>%
+  mutate(quant_corr = phospho_intensity - phospho_pred)
+
+res_2FF_timecourse$psm_corrected <- tt <- corr_fit$data_lm %>%
+  left_join(res_2FF_timecourse$psm_normalised, by = c("ID", "sample", "Protein.ID"))
+```
+
+
+## PCA
+
+```{r}
+m <- res_2FF_timecourse$psm_corrected %>%
+  mutate(sample = paste(timepoint, condition, replicate, sep = "_")) %>%
+  dcast(
+    ID ~ sample,
+    value.var = "quant_corr", fill = NA
+  ) %>%
+  drop_na() %>%
+  column_to_rownames("ID") %>%
+  as.matrix()
+
+
+pca_plot(m, "PC1", "PC2", 1, 1, -35, 25, pal = c("lightgrey", "darkcyan"), "glyco") 
+pca_plot(m, "PC3", "PC4", 1, 1, -30, 30, pal = c("grey", "darkcyan"), "glyco")
+```
+
+# 7. Differential abundance analysis
+
+```{r}
+res_2FF_timecourse$eset_glyco <- tt <-
+  res_2FF_timecourse$psm_corrected %>%
+  acast(ID ~ condition + timepoint + replicate, value.var = "quant_corr")
+
+boxplot(res_2FF_timecourse$eset_glyco)
+
+
+g_ <- str_extract(colnames(res_2FF_timecourse$eset_glyco), "2-Fluorofucose_\\d+h|DMSO_\\d+h")
+r_ <- str_extract(colnames(res_2FF_timecourse$eset_glyco), "rep\\d")
+t_ <- str_extract(colnames(res_2FF_timecourse$eset_glyco), "2-Fluorofucose|DMSO")
+
+design_matrix <- model.matrix(~ 0 + g_ + r_)
+design_matrix
+
+
+contr <- cbind(
+  "8h" = c(0, 0, 0, 1, 0, 0, 0, 0, -1, 0),
+  "24h" = c(1, 0, 0, 0, 0, -1, 0, 0, 0, 0),
+  "48h" = c(0, 1, 0, 0, 0, -1, 0, 0, 0),
+  "72h" = c(0, 0, 1, 0, 0, 0, -1, 0, 0)
+)
+
+fit_glyco <- limma::lmFit(res_2FF_timecourse$eset_glyco, design_matrix)
+fit_glyco <- limma::contrasts.fit(fit_glyco, contr)
+fit_glyco <- limma::eBayes(fit_glyco)
+
+```
+
+```{r}
+mapping <- res_2FF_timecourse$psm %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  distinct(Protein.ID, Gene, ID, n_position, glycan_type, Protein.Description) %>%
+  mutate(n_position = as.character(n_position)) %>%
+  separate(ID, into = c("Protein.ID", "Modified.Peptide", "Observed.Modifications"), sep = "_", remove = F)
+
+res_2FF_timecourse$limma_results <- tt <-
+  lapply(colnames(fit_glyco$coefficients), function(x) {
+    limma::topTable(fit_glyco, coef = x, number = Inf) %>%
+      mutate(contrast = x, dataset = "treatment effects") %>%
+      rownames_to_column(var = "ID")
+  }) %>%
+  bind_rows() %>%
+  separate(ID, into = c("Protein.ID", "Gene", "Modified.Peptide", "Observed.Modifications", "glycan_type", "n_position"), sep = "_", remove = F) %>%
+  left_join(mapping %>% distinct(Protein.ID, Protein.Description, Gene, Modified.Peptide, Observed.Modifications, glycan_type, n_position)) %>%
+  mutate(
+    hit = ifelse((logFC > log2(1.5) & adj.P.Val < 0.05), "hit", "no hit"),
+    hit = ifelse((logFC < log2(1 / 1.5) & adj.P.Val < 0.05), "hit", hit)
+  ) %>%
+  mutate(
+    direction = ifelse(logFC > 0 & hit == "hit", "up", "no change"),
+    direction = ifelse(logFC < 0 & hit == "hit", "down", direction),
+    contrast = factor(contrast, levels = c("8h", "24h", "48h", "72h"))
+  )
+```
+
+## Volcano
+
+```{r, fig.width = 10, fig.height=4}
+res_2FF_timecourse$limma_results %>%
+  ggplot(aes(x = logFC, y = -log10(P.Value), colour = direction)) +
+  geom_point() +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_grid(dataset ~ contrast) +
+  cowplot::panel_border()
+```
+
+```{r, fig.width=14, fig.height=16}
+res_2FF_timecourse$limma_results %>%
+  filter(dataset == "treatment effects" & glycan_type %in% c("high mannose", "fucosylated", "sialylated", "complex")) %>%
+  ggplot(aes(x = logFC, y = -log10(P.Value), colour = direction)) +
+  geom_hline(yintercept = 0) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = c(log2(1 / 1.5), log2(1.5)), linetype = 3) +
+  geom_point(alpha = 0.2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_grid(glycan_type ~ contrast) +
+  cowplot::theme_cowplot() +
+  cowplot::panel_border()+
+  labs(x= "log2 fold-change 2FF-DMSO" )
+```
+
+
+# 8. Hit specificity analyisis
+
+```{r}
+hitfrac_df <- res_2FF_timecourse$limma_results %>%
+  filter(dataset == "treatment effects") %>%
+  mutate(glycan_type = ifelse(glycan_type == "fucosylated", glycan_type, "other")) %>%
+  group_by(Protein.ID, Gene, glycan_type, n_position, hit) %>%
+  count() %>%
+  dcast(Protein.ID + Gene + glycan_type + n_position ~ hit, fill = 0) %>%
+  mutate(sum_forms = hit + `no hit`) %>%
+  filter(sum_forms > 3) %>%
+  filter(hit > 0) %>%
+  group_by(Protein.ID, Gene, glycan_type, n_position) %>%
+  summarise(hit_fraction = hit / sum_forms)
+
+hitfrac_df %>%
+  filter(hit_fraction > 0) %>%
+  ggplot(aes(x = hit_fraction, y = -1.2, colour = glycan_type)) +
+  ggforce::geom_sina(orientation = "y", stroke = 0, alpha = 0.5, size = 2.5, pos = position_dodge(1.2)) +
+  stat_summary(orientation = "y", geom = "crossbar", colour = "black", fun = mean, aes(group = glycan_type), pos = position_dodge(1.2)) +
+  geom_density(aes(x = hit_fraction, colour = glycan_type), inherit.aes = FALSE, size = 0.8, bounds = c(0, 1)) +
+  geom_hline(yintercept = 0, colour = "grey30") +
+  scale_y_continuous(labels = scales::label_number(accuracy = 1), limits = c(-2, 9)) +
+  scale_color_manual(values = c("#377eb8ff", "grey")) +
+  labs(x = "fraction of significantly\n regulated glycoforms per site", y = "data | density") +
+  cowplot::theme_cowplot()
+```
+
+#9. Clustering treatment data
+
+
+## cluster matrix
+
+```{r}
+hits <- res_2FF_timecourse$limma_results %>% filter(hit == "hit" & dataset == "treatment effects")
+
+res_2FF_timecourse$cluster_matrix_alltreatmentdata <- res_2FF_timecourse$limma_results %>%
+  filter(dataset == "treatment effects") %>%
+  dcast(ID ~ contrast, value.var = "logFC") %>%
+  filter(ID %in% hits$ID) %>%
+  column_to_rownames("ID") %>%
+  as.matrix()
+
+# res_2FF_timecourse$cluster_matrix_alltreatmentdata %>%
+#   ComplexHeatmap::Heatmap(show_row_names = F)
+# 
+# factoextra::fviz_nbclust(res_2FF_timecourse$cluster_matrix_alltreatmentdata, kmeans, method = "wss")
+
+set.seed(7)
+res_2FF_timecourse$neural_clusters_alltreatmentdata <- tt <- data.frame(
+  cluster = cclust::cclust(res_2FF_timecourse$cluster_matrix_alltreatmentdata, dist = "euclidean", method = "neuralgas", centers = 4)$cluster,
+  ID = rownames(res_2FF_timecourse$cluster_matrix_alltreatmentdata)
+) %>%
+  inner_join(res_2FF_timecourse$limma_results %>% filter(dataset == "treatment effects"), multiple = "all") %>%
+  select(ID, cluster, contrast, logFC, adj.P.Val) %>%
+  separate(ID, into = c("Protein.ID", "Gene", "Modified.Peptide", "Observed.Modifications", "glycan_type", "n_position"), sep = "_", remove = F)
+
+median_data <- res_2FF_timecourse$neural_clusters_alltreatmentdata %>%
+  select(ID, cluster, contrast, logFC) %>%
+  bind_rows(data.frame(cluster = 1, contrast = "0h", logFC = 0, ID = "dummy")) %>%
+  complete(cluster, contrast, ID) %>%
+  mutate(
+    logFC = ifelse(contrast == "0h", 0, logFC),
+    cluster = factor(cluster)
+  ) %>%
+  ungroup() %>%
+  filter(ID != "dummy") %>%
+  group_by(contrast, cluster) %>%
+  summarise(logFC = mean(logFC, na.rm = T)) %>%
+  mutate(contrast = as.numeric(str_remove(contrast, "h")))
+
+res_2FF_timecourse$neural_clusters_alltreatmentdata %>%
+  select(ID, cluster, contrast, logFC) %>%
+  bind_rows(data.frame(cluster = 1, contrast = "0h", logFC = 0, ID = "dummy")) %>%
+  complete(cluster, contrast, ID) %>%
+  mutate(
+    logFC = ifelse(contrast == "0h", 0, logFC),
+    cluster = factor(cluster)
+  ) %>%
+  ungroup() %>%
+  filter(ID != "dummy") %>%
+  mutate(contrast = as.numeric(str_remove(contrast, "h"))) %>%
+  ggplot(aes(contrast, logFC, colour = cluster)) +
+  # geom_point(size = 0.1) +
+  geom_hline(yintercept = c(0.6, -0.6), linetype = 3) +
+  geom_hline(yintercept = 0, linetype = 1) +
+  geom_line(aes(group = paste0(cluster, ID)), size = 0.1, alpha = 0.2) +
+  geom_smooth(data = median_data, aes(group = cluster), colour = "black", size = 1.5) +
+  geom_smooth(data = median_data, aes(group = cluster)) +
+  scale_colour_manual(values = c("1" = "darkred", "2" = "indianred", "3" = "lightskyblue1", "4" = "dodgerblue4")) +
+  # facet_wrap(~cluster) +
+  labs(y = "log2 fold-change 2FF-control", x = "treatment duration [h]") +
+  cowplot::theme_cowplot() 
+```
+
+## cluster composition
+
+```{r}
+res_2FF_timecourse$neural_clusters_alltreatmentdata %>%
+  ggplot(aes(x = as.factor(cluster), fill = glycan_type)) +
+  geom_bar(pos = "fill") +
+  scale_fill_manual(values = pal) +
+  cowplot::theme_cowplot() +
+  labs(x = "cluster", y = "proportion of glycopeptides")
+```
+
+#10. Cluster only fucosylated peptides
+
+```{r}
+hits <- res_2FF_timecourse$limma_results %>% filter(hit == "hit" & dataset == "treatment effects" & glycan_type == "fucosylated" & logFC < 0)
+
+res_2FF_timecourse$cluster_matrix_fuctreatmentdata <- res_2FF_timecourse$limma_results %>%
+  filter(dataset == "treatment effects" & glycan_type == "fucosylated") %>%
+  dcast(ID ~ contrast, value.var = "logFC") %>%
+  filter(ID %in% hits$ID) %>%
+  column_to_rownames("ID") %>%
+  as.matrix()
+
+# res_2FF_timecourse$cluster_matrix_fuctreatmentdata %>%
+#   ComplexHeatmap::Heatmap(show_row_names = F)
+# 
+# factoextra::fviz_nbclust(res_2FF_timecourse$cluster_matrix_fuctreatmentdata, kmeans, method = "wss")
+
+set.seed(5)
+res_2FF_timecourse$neural_cluster_fuctreatmentdata <- tt <- data.frame(
+  cluster = cclust::cclust(res_2FF_timecourse$cluster_matrix_fuctreatmentdata, dist = "euclidean", method = "neuralgas", centers = 3)$cluster,
+  ID = rownames(res_2FF_timecourse$cluster_matrix_fuctreatmentdata)
+) %>%
+  inner_join(res_2FF_timecourse$limma_results %>% filter(dataset == "treatment effects"), multiple = "all") %>%
+  select(ID, cluster, contrast, logFC) %>%
+  separate(ID, into = c("Protein.ID", "Gene", "Modified.Peptide", "Observed.Modifications", "glycan_type", "n_position"), sep = "_", remove = F)
+
+median_data <- res_2FF_timecourse$neural_cluster_fuctreatmentdata %>%
+  bind_rows(data.frame(cluster = 1, contrast = "0h", logFC = 0, ID = "dummy")) %>%
+  complete(cluster, contrast, ID) %>%
+  mutate(
+    logFC = ifelse(contrast == "0h", 0, logFC),
+    cluster = factor(cluster)
+  ) %>%
+  ungroup() %>%
+  filter(ID != "dummy") %>%
+  group_by(contrast, cluster) %>%
+  summarise(logFC = mean(logFC, na.rm = T)) %>%
+  mutate(contrast = as.numeric(str_remove(contrast, "h")))
+
+res_2FF_timecourse$neural_cluster_fuctreatmentdata %>%
+  bind_rows(data.frame(cluster = 1, contrast = "0h", logFC = 0, ID = "dummy")) %>%
+  complete(cluster, contrast, ID) %>%
+  mutate(
+    logFC = ifelse(contrast == "0h", 0, logFC),
+    cluster = factor(cluster)
+  ) %>%
+  ungroup() %>%
+  filter(ID != "dummy") %>%
+  mutate(contrast = as.numeric(str_remove(contrast, "h"))) %>%
+  ggplot(aes(contrast, logFC, colour = cluster)) +
+  # geom_point(size = 0.1) +
+  geom_hline(yintercept = c(0.6, -0.6), linetype = 3) +
+  geom_hline(yintercept = 0, linetype = 1) +
+  geom_line(aes(group = paste0(cluster, ID)), size = 0.1, alpha = 0.4) +
+  geom_line(data = median_data, aes(group = cluster), stat = "smooth", alpha = 1, size= 1, colour = "black") +
+  geom_smooth(data = median_data, aes(group = cluster), size = 0.8) +
+  scale_colour_manual(values = c("1" = "lightskyblue1", "2" = "dodgerblue3", "3" = "dodgerblue4")) +
+  # facet_wrap(~cluster) +
+  labs(y = "log2 fold-change 2FF-control", x = "treatment duration [h]") +
+  cowplot::theme_cowplot() 
+
+
+```
+
+## protein overlap
+
+```{r, fig.height=8, fig.width=5}
+tmp <- res_2FF_timecourse$neural_cluster_fuctreatmentdata %>%
+  group_by(Protein.ID) %>%
+  summarise(n = n_distinct(ID), n_clus = n_distinct(cluster)) %>% 
+  filter(n >= 4 & n_clus == 3)
+
+res_2FF_timecourse$neural_cluster_fuctreatmentdata %>%
+  separate(ID, into = c("Protein.ID", "Gene", "Modified.Peptide", "Observed.Modifications", "glycan_type", "n_position"), sep = "_", remove = F) %>%
+  filter(Protein.ID %in% tmp$Protein.ID) %>%
+  group_by(cluster, Gene) %>%
+  summarise(n = n(), mean_fc = mean(logFC)) %>%
+  acast(Gene ~ cluster, value = "mean_fc", fill = 0) %>%
+  ComplexHeatmap::Heatmap(row_names_gp = grid::gpar(fontsize = 8), col = circlize::colorRamp2(c(-2, 0, 2), c("dodgerblue4", "grey97", "darkred")), show_column_dend = F, show_row_dend = F, rect_gp = grid::gpar(col = "white", lwd = 1))
+```
+
+
+# Save 
+
+```{r}
+save(res_2FF_timecourse, file = paste0("results/", Sys.Date(), "_res_2FF_timecourse.RData"))
+```
+
+

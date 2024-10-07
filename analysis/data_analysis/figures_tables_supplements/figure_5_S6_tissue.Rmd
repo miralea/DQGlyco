@@ -66,7 +66,6 @@ blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
 ```
 
 ```{r}
-#load("data/paper/revision1/processed/2024-01-15_res_mouse_tissue_atlas.RData")
 load("results/2024-04-24_res_mouse_tissue_atlas.RData")
 ```
 
@@ -305,7 +304,7 @@ res_mouse_tissue_atlas$corr_per_site_per_mouse_gt %>%
 ```{r}
 locations_of_interest <- c("Endoplasmic reticulum", "Golgi apparatus","Lysosome", "Plasma membrane", "Extracellular")
 
-compartment_anno <- tt <- read_tsv("data/combined_loc_df.tsv")%>%
+compartment_anno <- tt <- read_tsv("comparison_to_datasets/combined_loc_df.tsv")%>%
   mutate(description = ifelse(grepl("Extracellular", description), "Extracellular", description)) %>% 
   filter(description %in% locations_of_interest) %>% 
   group_by(gene) %>%

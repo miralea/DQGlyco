@@ -1125,6 +1125,86 @@ res_microbiome_mousebrain_Nglyco$limma_results %>%
 ```
 
 
+# 11. Analysis of fractional intensities
+
+```{r}
+data <- res_microbiome_mousebrain_Nglyco$psm %>% 
+  distinct(glycan_type, Protein.ID, Modified.Peptide, Observed.Modifications, Intensity) 
+  #summarise(total_int = sum((Intensity), na.rm = T)) 
+
+data %>% 
+  ggplot(aes(x = glycan_type, y=log2(Intensity), colour = glycan_type)) +
+  ggforce::geom_sina() +
+  stat_summary(fun = median, geom = "crossbar", colour = "black") +
+  blank +
+  scale_color_manual(values = pal) +
+  ggpubr::stat_compare_means(ref.group = "high mannose", label = "p.signif", method = "t.test")
+
+data <- res_microbiome_mousebrain_Nglyco$psm %>% 
+  distinct(bin, Protein.ID, Modified.Peptide, Observed.Modifications, Intensity) 
+  #summarise(total_int = sum((Intensity), na.rm = T)) 
+
+data %>% 
+  ggplot(aes(x = bin, y=log2(Intensity))) +
+  ggforce::geom_sina() +
+  stat_summary(fun = median, geom = "crossbar", colour = "black") +
+  blank +
+  ggpubr::stat_compare_means(ref.group = "high mannose", label = "p.signif", method = "t.test") +
+  labs(x = "binned mass")
+  
+```
+
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm_anno %>% 
+  filter(Gene == "Slc1a2") %>% 
+  group_by(glycan_type, glycoID, n_position) %>% 
+  summarise(total_int = sum((quant), na.rm = T)) %>% 
+  ggplot(aes(x = as.factor(n_position), y= log2(total_int))) +
+  ggforce::geom_sina(aes(group = paste0(n_position))) +
+  stat_summary(aes(group = paste0(n_position)), fun = median, geom = "crossbar", colour = "red", pos = "dodge") 
+
+res_microbiome_mousebrain_Nglyco$psm %>% 
+  filter(Gene == "Slc1a2") %>% 
+  group_by(glycan_type, Protein.ID, Modified.Peptide, Observed.Modifications, n_position, Intensity) %>% 
+  ggplot(aes(x = as.factor(n_position), y= log2(Intensity))) +
+  ggforce::geom_sina(aes(group = paste0(n_position))) +
+  stat_summary(aes(group = paste0(n_position)), fun = median, geom = "crossbar", colour = "red", pos = "dodge") 
+  
+```
+
+
+```{r}
+res_microbiome_mousebrain_Nglyco$psm %>% 
+  distinct(Protein.ID, Modified.Peptide, Observed.Modifications, n_position, Intensity) %>% 
+  group_by(Protein.ID, n_position) %>% 
+  mutate(int_total = sum(Intensity, na.rm =T), n_pep = n()) %>% 
+  ungroup() %>% 
+  filter(n_pep > 10) %>% 
+  mutate(frac_int = Intensity/int_total) %>% 
+  ggplot(aes(x = frac_int)) +
+  geom_density() +
+  labs(x = "fractional intensity per peptide per site\n(for sites with >10 peptides)")
+  
+
+
+res_microbiome_mousebrain_Nglyco$psm %>% 
+  distinct(Protein.ID, Modified.Peptide, Observed.Modifications, n_position, Intensity) %>% 
+  group_by(Protein.ID, n_position) %>% 
+  mutate(int_total = sum(Intensity, na.rm =T), n_pep = n()) %>% 
+  ungroup() %>% 
+  filter(n_pep > 10) %>% 
+  mutate(frac_int = Intensity/int_total) %>% 
+  group_by(Protein.ID, n_position) %>% 
+  filter(frac_int == max(frac_int)) %>% 
+  ggplot(aes(x = frac_int)) +
+  geom_density(bounds = c(0,1), size = 1) +
+  labs(x = "fractional intensity of dominant peptide per site\n(for sites with >10 peptides, n = 1580)")
+  
+```
+
+
+
 # Save
 
 ```{r}

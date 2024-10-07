@@ -60,7 +60,7 @@ names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybr
 
 ```{r}
 #load("data/paper/top_runs/230213_allspecies_psm_processed.RData")
-load("2024-05-02_combined_lf_data_human_and_mouse.RData")
+load("results/2024-05-02_combined_lf_data_human_and_mouse.RData")
 # riley et al
 riley_glycopsm <- readxl::read_excel("data/comparisons/riley/glycopsms.xlsx", sheet = 2)%>% 
   mutate(glycan_content = Glycans) %>% 
@@ -265,9 +265,9 @@ t <- site_corr_obsmod %>%
 
 ```{r}
 #load("data/paper/top_runs/230223_Mouse_brain_lf_Oglyco_psm_processed.RData")
-load( "data/2024-05-06_mousebrain_fractionated_Oglyco_combined_psm_processed.RData")
+load( "results/2024-05-06_mousebrain_fractionated_Oglyco_combined_psm_processed.RData")
 
-mouse_psites <- read_tsv("data/paper/revision1/comparison_to_datasets/230203_uniprot_mouse_psites.tsv") %>% 
+mouse_psites <- read_tsv("comparison_to_datasets/230203_uniprot_mouse_psites.tsv") %>% 
   distinct(Protein.ID = Entry, modification_info = `Modified residue`) %>% 
   mutate(mod = str_extract_all(modification_info, 'MOD_RES \\d+; /note=\\"Phospho\\w+\\";')) %>% 
   unnest(cols = c(mod)) %>% 

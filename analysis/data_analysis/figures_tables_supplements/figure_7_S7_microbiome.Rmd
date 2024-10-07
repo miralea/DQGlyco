@@ -61,8 +61,7 @@ names(pal_O) <- c("FP", "O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid",
 ```
 
 ```{r}
-#load("data/paper/revision1/processed/2024-01-24_res_microbiome_mousebrain_Nglyco.RData")
-load("data/paper/revision1/processed/2024-01-24_res_microbiome_mousebrain_FPTPP.RData")
+load("results/2024-01-24_res_microbiome_mousebrain_FPTPP.RData")
 load("results/2024-04-29_res_microbiome_mousebrain_Nglyco.RData")
 ```
 

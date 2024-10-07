@@ -80,8 +80,8 @@ Combine single shot data
 
 
 ```{r}
-load("data/2024-05-02_res_HEK_Hela_optimisation_psm_processed.RData")
-load("data/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
+load("results/2024-05-02_res_HEK_Hela_optimisation_psm_processed.RData")
+load("results/2024-05-02_Mouse_brain_lf_singleshot_psm_processed.RData")
 
 psm_singleshot_combined <- 
   res_HEK_Hela_optimisation$psm %>% 
@@ -235,7 +235,7 @@ res_species$psm_total %>%
 ```{r}
 # load("data/paper/top_runs/230213_allspecies_psm_processed.RData")
 # load("data/paper/comparison_to_datasets/uniprot_annotation_comparison.RData")
-previos_anno_df <- read_csv("data/paper/revision1/comparison_to_datasets/merged_anno_glycosites_uniprot_psp.csv") %>%  mutate(origin = str_replace(origin, "out_data", "Potel et al."))
+previos_anno_df <- read_csv("comparison_to_datasets/merged_anno_glycosites_uniprot_psp.csv") %>%  mutate(origin = str_replace(origin, "out_data", "Potel et al."))
 #load("data/paper/revision1/processed/2024-01-08_combined_lf_data_human_and_mouse.RData")
 ```
 
@@ -280,7 +280,7 @@ massrange_comparison %>%
 # G
 
 ```{r}
-load("data/2024-05-06_mousebrain_fractionated_Oglyco_combined_psm_processed.RData")
+load("results/2024-05-06_mousebrain_fractionated_Oglyco_combined_psm_processed.RData")
 ```
 
 ```{r}
