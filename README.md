@@ -20,11 +20,11 @@ The analysis scripts can be found in analysis, which further is divided in struc
 
 The data analysis starts with psm/protein files which are the output of an MSFragger search (https://msfragger.nesvilab.org0) and can be retrieved from the **PRIDE repository** of the study (PXD042237 (Username: reviewer_pxd042237@ebi.ac.uk,  Password: yuVC5zjW)). 
 
-**In [*analysis/data_analysis/01_data_processing.Rmd*](analysis/data_analysis/01_data_processing.Rmd), these label free psm files are processed and saved in a standardised way. The psm files of the TMT labelled data is processed the same way in the respective scripts and result objects used for analysis and plotting are provided in data.zip. ** 
+**In [*analysis/data_analysis/01_data_processing.Rmd*](analysis/data_analysis/01_data_processing.Rmd), these label free psm files are processed and saved in a standardised way. The psm files of the TMT labelled data is processed the same way in the respective scripts and result objects used for analysis and plotting are provided in data.7z (https://oc.embl.de/index.php/s/FiJI0NKFgVB9uDM). ** 
 
 ---
 
-All further analyses start from the processed files and are done per dataset (eg labelfree, tissue data, solubility data etc). All results, external datasets etc are deposited in the data.zip file and result files are additionally available at *https://apps.embl.de/glycoapp/* in the download section or as supplementary material of the manuscript.
+All further analyses start from the processed files and are done per dataset (eg labelfree, tissue data, solubility data etc). All results, external datasets etc are deposited in data.7z (https://oc.embl.de/index.php/s/FiJI0NKFgVB9uDM) and result files are additionally available at *https://apps.embl.de/glycoapp/* in the download section or as supplementary material of the manuscript.
 
 ---
 
