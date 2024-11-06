@@ -68,14 +68,18 @@ load("results/2024-05-02_HEK_HeLa_lf_PGC_psm_processed.RData")
 load("results/2024-09-26_res_2FF_timecourse.RData")
 
 # Data4
-load("results/2024-04-24_res_mouse_tissue_atlas.RData")
+load("data/paper/revision1/processed/2024-02-01_res_surface_acc.RData")
 
 # Data 5
+load("results/2024-04-24_res_mouse_tissue_atlas.RData")
+
+# Data 6
 load("results/2024-01-16_res_mouse_brain_solubility.RData")
 
-# Data6
+# Data 7
 load("results/2024-04-29_res_microbiome_mousebrain_Nglyco.RData")
-# Data7
+
+# Data 8
 load("results/2024-01-24_res_microbiome_mousebrain_FPTPP.RData")
 ```
 
@@ -223,12 +227,43 @@ quantitative_data_2FF <- lapply(quantitative_data_2FF, as.data.frame)
 write.xlsx(quantitative_data_2FF, file = "data/paper/revision2/supplementary_data/Supplementary_Data_3.xlsx")
 ```
 
+# Data 4 - Surface
 
-# Data 4 - tissues
+```{r}
+quantitative_data_surface <- list(
+  "explanation" =  readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 4),
+  "DEresults_affectedsites" =
+    res_surface_acc$limma_results %>%
+      mutate( Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "^n\\[mod\\]", "")) %>%
+      select(dataset, Protein.ID, Gene, n_position, Modified.Peptide, glycan_type, Observed.Modifications, contrast, logFC, adj.P.Val, hit, direction),
+  "DEresults_complete" =
+    res_surface_acc$limma_results_complete %>%
+      mutate( Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+             Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "^n\\[mod\\]", "")) %>%
+      select(dataset, Protein.ID, Gene, n_position, Modified.Peptide, glycan_type, Observed.Modifications, contrast, logFC, adj.P.Val, hit, direction),
+    "Nglyco_psm" =
+    res_surface_acc$psm  %>%
+    distinct(dataset, treatment, replicate, Protein.ID, Gene, n_position, Peptide, Modified.Peptide, glycan_type, Observed.Modifications, quant_norm) %>%
+    mutate(data = "N-glyco_surfaceacc", 
+           Modified.Peptide = str_replace_all(Modified.Peptide, "N\\[", "N\\[glycan_"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "M\\[\\d+\\]", "M\\[ox\\]"),
+           Modified.Peptide = str_replace_all(Modified.Peptide, "\\[\\d+\\]", "\\[mod\\]")
+           )
+)
+quantitative_data_surface <- lapply(quantitative_data_surface, as.data.frame)
+write.xlsx(quantitative_data_surface, file = "data/paper/revision2/supplementary_data/Supplementary_Data_4.xlsx")
+```
+
+# Data 5 - tissues
 
 ```{r}
 quantitative_data_tissue <- list(
-  "explanation" = readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 4),
+  "explanation" = readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 5),
   "N-glyco_liver" =
     res_mouse_tissue_atlas$glyco_psm_corrected %>%
       filter(tissue == "liver") %>%
@@ -270,14 +305,14 @@ quantitative_data_tissue <- list(
       summarise(quant_abundance_corrected = median(quant_abundance_corrected))
 )
 quantitative_data_tissue <- lapply(quantitative_data_tissue, as.data.frame)
-write.xlsx(quantitative_data_tissue, file = "data/paper/revision2/supplementary_data/Supplementary_Data_4.xlsx")
+write.xlsx(quantitative_data_tissue, file = "data/paper/revision2/supplementary_data/Supplementary_Data_5.xlsx")
 ```
 
-# Data 5 - SPP
+# Data 6 - SPP
 
 ```{r}
 quantitative_data_spp <- list(
-  "explanation" =  readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 5),
+  "explanation" =  readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 6),
   "solubility_ratios" =
     res_mouse_brain_solubility$solubility_ratios %>%
     inner_join(res_mouse_brain_solubility$glyco_psm %>% group_by(Protein.ID, Modified.Peptide, Observed.Modifications) %>% summarise(Hyperscore = max(Hyperscore, na.rm = T))) %>%
@@ -296,15 +331,15 @@ quantitative_data_spp <- list(
       select(dataset, Protein.ID, Gene, n_position, Modified.Peptide, glycan_type, Observed.Modifications, contrast, logFC, adj.P.Val, hit, direction)
 )
 quantitative_data_spp <- lapply(quantitative_data_spp, as.data.frame)
-write.xlsx(quantitative_data_spp, file = "data/paper/revision2/supplementary_data/Supplementary_Data_5.xlsx")
+write.xlsx(quantitative_data_spp, file = "data/paper/revision2/supplementary_data/Supplementary_Data_6.xlsx")
 ```
 
 
-# Data 6 - microbiome
+# Data 7 - microbiome
 
 ```{r}
 quantitative_data_microbiome <- list(
-  "explanation" = readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 6),
+  "explanation" = readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 7),
   "mouse_experiments" = mouse_experiments,
   "results_N-glycosylation" =
     res_microbiome_mousebrain_Nglyco$limma_results %>%
@@ -329,14 +364,14 @@ quantitative_data_microbiome <- list(
       select(Protein.ID, Gene, Protein.Description, contrast, logFC, adj.P.Val, hit, direction)
 )
 quantitative_data_microbiome <- lapply(quantitative_data_microbiome, as.data.frame)
-write.xlsx(quantitative_data_microbiome, file = "data/paper/revision2/supplementary_data/Supplementary_Data_6.xlsx")
+write.xlsx(quantitative_data_microbiome, file = "data/paper/revision2/supplementary_data/Supplementary_Data_7.xlsx")
 ```
 
-# Data 7 - tpp
+# Data 8 - tpp
 
 ```{r}
 quantitative_tpp <- list(
-  "explanation" = readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 7),
+  "explanation" = readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 8),
   "TPP_quant_info" =
     res_fpTPP_mousebrain_microbiome$FP_irs_norm_sclaed %>%
       select(Gene, ID, temperature, sample, quant_irs_norm, quant_irs),
@@ -345,17 +380,17 @@ quantitative_tpp <- list(
       select(Protein.ID, Gene, pVal, BHadjustpVal)
 )
 quantitative_tpp <- lapply(quantitative_tpp, as.data.frame)
-write.xlsx(quantitative_tpp, file = "data/paper/revision2/supplementary_data/Supplementary_Data_7.xlsx")
+write.xlsx(quantitative_tpp, file = "data/paper/revision2/supplementary_data/Supplementary_Data_8.xlsx")
 ```
 
 
-# Data 8 - enrichments
+# Data 9 - enrichments
 
 ```{r}
 micro_anno <- data.frame(bin = unique(ER_string_microheterogeneity$bin), microheterogeneity = c("low", "middle", "high"))
 
 enrichment_tables <- list(
-  "explanation" = readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 8),
+  "explanation" = readxl::read_excel("data/paper/revision2/supplementary_data/suppdata_firstpage.xlsx", sheet = 9),
   "N_and_O_string_enrichment" =
     ER_NvsO_string %>%
       dplyr::select(dataset, description, category, number_of_genes, number_of_genes_in_background, fdr, inputGenes),
@@ -375,7 +410,7 @@ enrichment_tables <- list(
     mutate(dataset = "N-glyco")
 )
 enrichment_tables <- lapply(enrichment_tables, as.data.frame)
-write.xlsx(enrichment_tables, file = "data/paper/revision2/supplementary_data/Supplementary_Data_8.xlsx")
+write.xlsx(enrichment_tables, file = "data/paper/revision2/supplementary_data/Supplementary_Data_9.xlsx")
 ```
 
 ```{r}

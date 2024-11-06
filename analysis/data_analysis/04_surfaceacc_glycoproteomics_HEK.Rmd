@@ -1,0 +1,787 @@
+---
+title: "Preprocess pNGase and proteinasek treated glycoproteomics of HEK cells"
+output:
+  html_document:
+    keep_md: yes
+    toc: yes
+    theme: united
+    code_folding: hide
+editor_options: 
+  chunk_output_type: console
+---
+
+# General settings
+
+```{r setup}
+knitr::opts_chunk$set(
+  echo = TRUE,
+  warning = FALSE,
+  message = FALSE,
+  include = TRUE,
+  cache = TRUE,
+  cache.lazy = FALSE,
+  eval = TRUE,
+  fig.width = 4 * (1 + sqrt(5)) / 2, 
+  fig.height = 4,
+  dpi = 700
+)
+knitr::opts_knit$set(root.dir = "/Users/burtsche/Documents/01_repos/Glycoproteomics/")
+```
+
+## Packages
+
+```{r, message=F, warning =F}
+library(tidyverse)
+library(ggplot2);theme_set(cowplot::theme_cowplot(font_size = 15))
+library("reshape2")
+library(OmnipathR)
+library(viridis)
+library(ggrepel)
+options(connectionObserver = NULL)
+library(org.Mm.eg.db)
+library(knitr)
+library(ggpubr)
+library(RColorBrewer)
+library(ReactomePA)
+library(clusterProfiler)
+library(reactome.db)
+library(ggvenn)
+library(Biostrings)
+library(limma)
+
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+filter <- dplyr::filter
+```
+
+```{r}
+options(ggplot2.discrete.colour= c("purple4", "goldenrod", "darkgreen", "darkorange", "darkblue", "darkred", "darkcyan"), ggplot2.discrete.fill= c("purple4", "goldenrod", "darkgreen", "darkorange", "darkblue", "darkred", "darkcyan"))
+
+order <- c("sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small")
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", "#ffe300ff","#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+
+order_O <- c("O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+pal_O <- c("lightgrey",  "#d7301fff", "#377eb8ff", "#41ae76ff","#88419dff" ,"#ff7f00ff", '#a65628ff',"#f781bfff")
+names(pal_O) <- c("FP", "O-sialylated", "O-fucosylated", "O-hexose", "O-hybrid", "O-phospho", "O-sulfated", "O-GlcNac")
+tilted <-  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1))
+blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+```
+
+# Functions
+
+```{r}
+source("~/Documents/generic_functions.R")
+```
+
+# 1. Preprocessing
+
+## A Read and annotate data
+
+```{r}
+res_hek_pngase_glyco <- glyco_psm_processing(path = "/Users/burtsche/Documents/01_repos/Glycoproteomics/data/HEK_PNGAse_psm.tsv", 
+                                                     dataset = "HEK_pngase_glyco", 
+                                                     species = "Homo sapiens")
+
+names(res_hek_pngase_glyco) <- paste0("glyco_", names(res_hek_pngase_glyco))
+```
+
+
+```{r}
+res_hek_pngase_glyco$TMT_info <- data.frame(
+  sample_glyco = c(
+    "sample-01", "sample-02", "sample-03",
+    "sample-04", "sample-05", "sample-06",
+    "sample-07", "sample-08"
+  ),
+  treatment = c(
+    "ctl", "ctl", "ctl", "ctl",
+    "PNGase", "PNGase", "PNGase", "PNGase"
+  ),
+  replicate = c(
+    "rep1","rep2","rep3", "rep4",
+    "rep1","rep2","rep3", "rep4"
+  )
+)
+```
+
+## B Normalisation
+
+```{r}
+res_hek_pngase_glyco$glyco_psm_normalised <-  tt <-
+  res_hek_pngase_glyco$glyco_psm %>%
+  select(Protein.ID, Gene, Peptide, Modified.Peptide, Observed.Modifications, n_position, glycan_type, Gene, Purity, matches("sample")) %>%
+  melt(
+    variable.name = "sample",
+    value.name = "quant",
+    id.vars = c("Protein.ID", "Gene", "Peptide", "Modified.Peptide","Observed.Modifications", "n_position", "glycan_type")
+  ) %>%
+  # add TMT info
+  inner_join(res_hek_pngase_glyco$TMT_info,
+    by = c("sample" = "sample_glyco"),
+    multiple = "all"
+  ) %>%
+  drop_na() %>%
+  mutate(
+    ID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications)
+  ) %>%
+  filter(!is.na(Protein.ID) & !is.na(Modified.Peptide) & !is.na(quant)) %>%
+  mutate(quant = ifelse(quant == 0, NA, quant)) %>%
+  ungroup() %>% 
+  #group_by(treatment) %>%
+  group_modify(~ tibble(normalisation_melted_ptmTPP(.))) %>%
+  ungroup()
+
+```
+
+### check
+
+```{r}
+ggplot(res_hek_pngase_glyco$glyco_psm_normalised  %>%
+         distinct(replicate,treatment, Peptide, `Modified.Peptide`,Observed.Modifications, .keep_all = T), 
+       aes(x = as.factor(sample), y = log2(quant), colour = treatment)) +
+  geom_boxplot() +
+  cowplot::theme_cowplot() +
+  #facet_wrap(~replicate) +
+  labs( y = "log2 intensity")
+
+ggplot(res_hek_pngase_glyco$glyco_psm_normalised  %>%
+         distinct(replicate,treatment, Peptide, `Modified.Peptide`,Observed.Modifications, .keep_all = T), 
+       aes(x = as.factor(sample), y = log2(quant_norm), colour = treatment)) +
+  geom_boxplot() +
+  cowplot::theme_cowplot() +
+  #facet_wrap(~replicate) +
+  labs( y = "log2 quant_norm")
+```
+
+## C PCA
+
+### raw
+
+```{r}
+m <- acast(res_hek_pngase_glyco$glyco_psm_normalised %>% drop_na(),
+  sample ~ Protein.ID + Modified.Peptide + Observed.Modifications,
+  value.var = "quant",
+  fun.aggregate = median,
+  fill = 0
+)
+
+m[m == 0] <- NA
+m <- t(m)
+m <- m[complete.cases(m), ]
+m <- t(m)
+
+m <- log2(m)
+
+m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+  order(decreasing = T) %>%
+  head(3000), ]
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  inner_join(res_hek_pngase_glyco$TMT_info, by = c("sample" = "sample_glyco")) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = as.factor(treatment), shape = replicate)) +
+  geom_point(size = 3) +
+  labs(title = "Glycoproteome", 
+       subtitle = "raw intensities", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+```
+
+### normalised
+
+```{r}
+m <- acast(res_hek_pngase_glyco$glyco_psm_normalised %>% drop_na(),
+  sample ~ Protein.ID + Modified.Peptide + Observed.Modifications,
+  value.var = "quant_norm",
+  fun.aggregate = median,
+  fill = 0
+)
+
+m[m == 0] <- NA
+m <- t(m)
+m <- m[complete.cases(m), ]
+m <- t(m)
+
+m <- log2(m)
+
+m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+  order(decreasing = T) %>%
+  head(3000), ]
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  inner_join(res_hek_pngase_glyco$TMT_info, by = c("sample" = "sample_glyco")) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = as.factor(treatment), shape = replicate)) +
+  geom_point(size = 3) +
+  labs(title = "Glycoproteome", 
+       subtitle = "norm intensities - per sol", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+```
+
+```{r}
+rm(m, pca_rotation)
+```
+
+
+#2. Limma
+
+## Input
+
+
+```{r}
+res_hek_pngase_glyco$eset <- tt <-  res_hek_pngase_glyco$glyco_psm_normalised %>% 
+  acast(Protein.ID + Modified.Peptide + Observed.Modifications~treatment+replicate, 
+        value.var = "quant_norm", fun.aggregate = median) 
+
+res_hek_pngase_glyco$eset <- res_hek_pngase_glyco$eset[complete.cases(res_hek_pngase_glyco$eset),]
+
+res_hek_pngase_glyco$eset <- log2(res_hek_pngase_glyco$eset)
+
+res_hek_pngase_glyco$eset %>%  boxplot()
+
+```
+
+## Design
+
+```{r}
+t_ <- str_extract(colnames(res_hek_pngase_glyco$eset), "ctl|PNGase")
+r_ <- str_extract(colnames(res_hek_pngase_glyco$eset), "rep\\d")
+
+res_hek_pngase_glyco$design <- model.matrix(~ 0 + t_ + r_)
+res_hek_pngase_glyco$design
+
+res_hek_pngase_glyco$contr <-
+  cbind(
+    "PNGase-ctl" = c(1, -1, 0, 0, 0)
+  )
+```
+
+### Fit
+
+```{r}
+fit <- lmFit(res_hek_pngase_glyco$eset, res_hek_pngase_glyco$design)
+fit <- contrasts.fit(fit, res_hek_pngase_glyco$contr)
+fit <- eBayes(fit)
+```
+
+### Extract results
+
+```{r}
+mapping <- res_hek_pngase_glyco$glyco_psm %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  distinct(Protein.ID, Gene, ID, n_position, glycan_type, bin) 
+
+res_hek_pngase_glyco$limma_results <- lapply(colnames(fit$coefficients), function(x) {
+  limma::topTable(fit, coef = x, number = Inf) %>%
+    mutate(contrast = x, dataset = "PNGase_comp") %>%
+    rownames_to_column(var = "ID")
+}) %>%
+  bind_rows() %>%
+  separate(ID, into = c("Protein.ID", "Modified.Peptide", "Observed.Modifications"), sep = "_", remove = F) %>%
+  mutate(
+    hit = ifelse((logFC > log2(1.5) & adj.P.Val < 0.05), "hit", "no hit"),
+    hit = ifelse((logFC < log2(1 / 1.5) & adj.P.Val < 0.05), "hit", hit)
+  ) %>%
+  mutate(
+    direction = ifelse(logFC > 0 & hit == "hit", "up", "no change"),
+    direction = ifelse(logFC < 0 & hit == "hit", "down", direction)
+  ) %>%
+  mutate(ID = ifelse(is.na(ID), Protein.ID, ID)) %>%
+  left_join(mapping, by = c("Protein.ID", "ID")) %>% 
+  mutate(glycan_type = ifelse(glycan_type == "high mannose" &
+                                grepl("Hex\\(10\\)|Hex\\(11\\)|Hex\\(12\\)", Observed.Modifications),
+                              "extra high mannose", glycan_type))
+```
+
+## Hits
+
+```{r}
+res_hek_pngase_glyco$limma_results %>% 
+  group_by(glycan_type) %>% 
+  mutate(n_type = n()) %>% 
+  ungroup() %>% 
+  filter(hit == "hit") %>% 
+  group_by(glycan_type) %>% 
+  mutate(n_hit_type = n()) %>% 
+  ungroup() %>%  
+  distinct(glycan_type,n_hit_type,n_type) %>% 
+  group_by(glycan_type) %>% 
+  dplyr::summarise(hit_fraction = n_hit_type/n_type) %>% 
+ggplot(aes(x = glycan_type, y = hit_fraction)) +
+  geom_bar(stat = "identity") +
+  #scale_fill_manual(values = c("dodgerblue4", "indianred")) +
+  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1)) +
+  #facet_wrap(~hit, scales = "free") +
+  labs(y = "hit fraction")
+```
+
+### sites with more than 1
+
+```{r}
+res_hek_pngase_glyco$more_than_1change <- 
+  res_hek_pngase_glyco$limma_results %>% 
+  dplyr::filter(hit == "hit" & logFC >0) %>% 
+   dplyr::mutate(siteID = paste0(Protein.ID, "_", n_position)) %>% 
+   dplyr::group_by(siteID) %>% 
+   dplyr::count() %>% 
+   dplyr::filter(n >1)
+```
+
+## Volcano
+
+```{r}
+ggplot(
+  res_hek_pngase_glyco$limma_results %>% 
+    mutate(siteID = paste0(Protein.ID, "_", n_position)) %>%
+    filter(siteID %in% res_hek_pngase_glyco$more_than_1change$siteID),
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_hline(yintercept = -log10(0.05), linetype =3)+
+  geom_vline(xintercept = 0, linetype =3)+
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  #facet_grid( ~ dataset, scales = "free") +
+  # theme_bw(14) +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change\nPNGase-ctl", y = "-log10 p-value")
+
+ggplot(
+  res_hek_pngase_glyco$limma_results,
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_hline(yintercept = -log10(0.05), linetype =3)+
+  geom_vline(xintercept = 0, linetype =3)+
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  #facet_grid( ~ dataset, scales = "free") +
+  # theme_bw(14) +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change\nPNGase-ctl", y = "-log10 p-value")
+```
+
+```{r}
+ res_hek_pngase_glyco$limma_results %>% 
+  # mutate(siteID = paste0(Protein.ID, "_", n_position)) %>%
+  # filter(siteID %in% res_hek_pngase_glyco$more_than_1change$siteID) %>%
+  ggplot(aes(x = logFC)) +
+  geom_histogram(binwidth = 0.05) +
+  geom_vline(xintercept = 0, colour = "red") 
+```
+
+### glycan_tpe and mass bin
+
+```{r}
+ggplot(
+  res_hek_pngase_glyco$limma_results,
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_wrap( ~ glycan_type,  ncol = 3) +
+  theme(panel.grid = element_blank()) +
+  labs(x =  "log2 fold-change\nPNGase-ctl", y = "-log10 p-value")
+
+ggplot(
+  res_hek_pngase_glyco$limma_results,
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_wrap( ~ bin,  ncol = 3) +
+  theme(panel.grid = element_blank()) +
+  labs(x =  "log2 fold-change\nPNGase-ctl", y = "-log10 p-value")
+```
+
+# Add mouse gene
+
+```{r}
+library(babelgene)
+conversion <- distinct(res_hek_pngase_glyco$limma_results, Gene)
+conversion <- orthologs(genes = conversion$Gene , human = TRUE, species = "Mus musculus")
+
+res_hek_pngase_glyco$limma_results <- res_hek_pngase_glyco$limma_results %>% 
+  left_join(conversion %>% select(mouse_gene = symbol, Gene = human_symbol))
+```
+
+
+# Save
+
+```{r}
+save(res_hek_pngase_glyco, file = paste0("~/Documents/01_repos/Glycoproteomics/results/", Sys.Date(), "_res_hek_pngase_glyco.RData"))
+```
+
+
+
+# ProteinaseK
+# 1. Glyco
+
+## A Preprocess
+
+```{r}
+res_hek_proteinasek_glyco <- glyco_psm_processing(path = "/Users/burtsche/Documents/01_repos/Glycoproteomics/data/HEK_glyco_PK_all_psm.tsv", 
+                                                     dataset = "HEK_proteinasek_glyco", 
+                                                     species = "Homo sapiens")
+
+names(res_hek_proteinasek_glyco) <- paste0("glyco_", names(res_hek_proteinasek_glyco))
+```
+
+
+```{r}
+res_hek_proteinasek_glyco$TMT_info <- data.frame(
+  sample_glyco = c(
+    "sample-01", "sample-02", "sample-03",
+    "sample-04", "sample-05", "sample-06",
+    "sample-07", "sample-08"
+  ),
+  treatment = c(
+    "ctl", "ctl", "ctl", "ctl",
+    "ProteinaseK", "ProteinaseK", "ProteinaseK", "ProteinaseK"
+  ),
+  replicate = c(
+    "rep1","rep2","rep3", "rep4",
+    "rep1","rep2","rep3", "rep4"
+  )
+)
+```
+
+## B Normalisation
+
+```{r}
+res_hek_proteinasek_glyco$glyco_psm_normalised <-  tt <-
+  res_hek_proteinasek_glyco$glyco_psm %>%
+  select(Protein.ID, Gene, Peptide, Modified.Peptide, Observed.Modifications, n_position, glycan_type, Gene, Purity, matches("sample")) %>%
+  melt(
+    variable.name = "sample",
+    value.name = "quant",
+    id.vars = c("Protein.ID", "Gene", "Peptide", "Modified.Peptide","Observed.Modifications", "n_position", "glycan_type")
+  ) %>%
+  # add TMT info
+  inner_join(res_hek_proteinasek_glyco$TMT_info,
+    by = c("sample" = "sample_glyco"),
+    multiple = "all"
+  ) %>%
+  drop_na() %>%
+  mutate(
+    ID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications)
+  ) %>%
+  filter(!is.na(Protein.ID) & !is.na(Modified.Peptide) & !is.na(quant)) %>%
+  mutate(quant = ifelse(quant == 0, NA, quant)) %>%
+  ungroup() %>% 
+  #group_by(treatment) %>%
+  group_modify(~ tibble(normalisation_melted_ptmTPP(.))) %>%
+  ungroup()
+
+```
+
+```{r}
+res_hek_proteinasek_glyco$glyco_psm_normalised %>% 
+  ggplot(aes(x = glycan_type)) +
+  geom_bar()
+```
+
+
+### check
+
+```{r}
+ggplot(res_hek_proteinasek_glyco$glyco_psm_normalised  %>%
+         distinct(replicate,treatment, Peptide, `Modified.Peptide`,Observed.Modifications, .keep_all = T), 
+       aes(x = as.factor(sample), y = log2(quant), colour = treatment)) +
+  geom_boxplot() +
+  cowplot::theme_cowplot() +
+  #facet_wrap(~replicate) +
+  labs( y = "log2 intensity")
+
+ggplot(res_hek_proteinasek_glyco$glyco_psm_normalised  %>%
+         distinct(replicate,treatment, Peptide, `Modified.Peptide`,Observed.Modifications, .keep_all = T), 
+       aes(x = as.factor(sample), y = log2(quant_norm), colour = treatment)) +
+  geom_boxplot() +
+  cowplot::theme_cowplot() +
+  #facet_wrap(~replicate) +
+  labs( y = "log2 quant_norm")
+```
+
+## C PCA
+
+### raw
+
+```{r}
+m <- acast(res_hek_proteinasek_glyco$glyco_psm_normalised %>% drop_na(),
+  sample ~ Protein.ID + Modified.Peptide + Observed.Modifications,
+  value.var = "quant",
+  fun.aggregate = median,
+  fill = 0
+)
+
+m[m == 0] <- NA
+m <- t(m)
+m <- m[complete.cases(m), ]
+m <- t(m)
+
+m <- log2(m)
+
+m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+  order(decreasing = T) %>%
+  head(3000), ]
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  inner_join(res_hek_proteinasek_glyco$TMT_info, by = c("sample" = "sample_glyco")) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = as.factor(treatment), shape = replicate)) +
+  geom_point(size = 3) +
+  labs(title = "Glycoproteome", 
+       subtitle = "raw intensities", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+```
+
+### normalised
+
+```{r}
+m <- acast(res_hek_proteinasek_glyco$glyco_psm_normalised %>% drop_na(),
+  sample ~ Protein.ID + Modified.Peptide + Observed.Modifications,
+  value.var = "quant_norm",
+  fun.aggregate = median,
+  fill = 0
+)
+
+m[m == 0] <- NA
+m <- t(m)
+m <- m[complete.cases(m), ]
+m <- t(m)
+
+m <- log2(m)
+
+m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+  order(decreasing = T) %>%
+  head(3000), ]
+
+pca <- prcomp(m)
+plot(pca)
+var = (pca$sdev)^2/sum(pca$sdev^2)*100
+
+pca$x %>%
+  as.data.frame() %>%
+  rownames_to_column("sample") %>%
+  inner_join(res_hek_proteinasek_glyco$TMT_info, by = c("sample" = "sample_glyco")) %>%
+  ggplot(aes(x = PC1, y = PC2, colour = as.factor(treatment), shape = replicate)) +
+  geom_point(size = 3) +
+  labs(title = "Glycoproteome", 
+       subtitle = "norm intensities - per sol", 
+       x = paste0("PC1 (", as.character(round(var[1])), "%)"),
+       y = paste0("PC2 (", as.character(round(var[2])), "%)"))
+
+pca_rotation <- pca$rotation %>% as.data.frame()
+```
+
+```{r}
+rm(m, pca_rotation)
+```
+
+
+# Limma
+
+### Input
+
+
+```{r}
+res_hek_proteinasek_glyco$eset <- tt <-  res_hek_proteinasek_glyco$glyco_psm_normalised %>% 
+  acast(Protein.ID + Modified.Peptide + Observed.Modifications~treatment+replicate, 
+        value.var = "quant_norm", fun.aggregate = median, fill = NaN) 
+
+res_hek_proteinasek_glyco$eset <- res_hek_proteinasek_glyco$eset[complete.cases(res_hek_proteinasek_glyco$eset),]
+
+
+# convert solubility ratios to log2 scale
+res_hek_proteinasek_glyco$eset <- log2(res_hek_proteinasek_glyco$eset)
+
+res_hek_proteinasek_glyco$eset %>%  boxplot()
+tt <- res_hek_proteinasek_glyco$eset
+
+```
+
+### Design
+
+```{r}
+t_ <- str_extract(colnames(res_hek_proteinasek_glyco$eset), "ctl|ProteinaseK")
+r_ <- str_extract(colnames(res_hek_proteinasek_glyco$eset), "rep\\d")
+
+res_hek_proteinasek_glyco$design <- model.matrix(~ 0 + t_ + r_ )
+res_hek_proteinasek_glyco$design
+
+res_hek_proteinasek_glyco$contr <-
+  cbind(
+    "ProteinaseK-ctl" = c(1, -1, 0,0,0)
+  )
+```
+
+### Fit
+
+```{r}
+fit <- lmFit(res_hek_proteinasek_glyco$eset, res_hek_proteinasek_glyco$design)
+fit <- contrasts.fit(fit, res_hek_proteinasek_glyco$contr)
+fit <- eBayes(fit, robust=TRUE)
+
+```
+
+### Extract results
+
+```{r}
+mapping <- res_hek_proteinasek_glyco$glyco_psm %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  distinct(Protein.ID, Gene, ID, n_position, glycan_type, bin) 
+
+res_hek_proteinasek_glyco$limma_results <- lapply(colnames(fit$coefficients), function(x) {
+  limma::topTable(fit, coef = x, number = Inf) %>%
+    mutate(contrast = x, dataset = "ProteinaseK_comp") %>%
+    rownames_to_column(var = "ID")
+}) %>%
+  bind_rows() %>%
+  separate(ID, into = c("Protein.ID", "Modified.Peptide", "Observed.Modifications"), sep = "_", remove = F) %>%
+  mutate(
+    hit = ifelse((logFC > log2(1.5) & adj.P.Val < 0.05), "hit", "no hit"),
+    hit = ifelse((logFC < log2(1 / 1.5) & adj.P.Val < 0.05), "hit", hit)
+  ) %>%
+  mutate(
+    direction = ifelse(logFC > 0 & hit == "hit", "up", "no change"),
+    direction = ifelse(logFC < 0 & hit == "hit", "down", direction)
+  ) %>%
+  mutate(ID = ifelse(is.na(ID), Protein.ID, ID)) %>%
+  left_join(mapping, by = c("Protein.ID", "ID")) %>% 
+  mutate(glycan_type = ifelse(glycan_type == "high mannose" &
+                                grepl("Hex\\(10\\)|Hex\\(11\\)|Hex\\(12\\)", Observed.Modifications),
+                              "extra high mannose", glycan_type))
+```
+
+## Hits
+
+```{r}
+res_hek_proteinasek_glyco$limma_results %>% 
+  group_by(glycan_type) %>% 
+  mutate(n_type = n()) %>% 
+  ungroup() %>% 
+  filter(hit == "hit") %>% 
+  group_by(glycan_type) %>% 
+  mutate(n_hit_type = n()) %>% 
+  ungroup() %>%  
+  distinct(glycan_type,n_hit_type,n_type) %>% 
+  group_by(glycan_type) %>% 
+  dplyr::summarise(hit_fraction = n_hit_type/n_type) %>% 
+ggplot(aes(x = glycan_type, y = hit_fraction)) +
+  geom_bar(stat = "identity") +
+  #scale_fill_manual(values = c("dodgerblue4", "indianred")) +
+  theme(axis.text.x = element_text(angle = 45, hjust =1, vjust = 1)) +
+  #facet_wrap(~hit, scales = "free") +
+  labs(y = "hit fraction")
+```
+
+
+```{r}
+res_hek_proteinasek_glyco$more_than_1change <- res_hek_proteinasek_glyco$limma_results %>% 
+  filter(hit == "hit" & logFC > 0) %>% 
+  mutate(siteID = paste0(Protein.ID, "_", n_position)) %>% 
+  group_by(siteID) %>% 
+  count %>% 
+  filter(n >1)
+```
+
+## Volcano
+
+```{r}
+ggplot(
+  res_hek_proteinasek_glyco$limma_results %>% 
+    mutate(siteID = paste0(Protein.ID, "_", n_position)) %>% 
+    filter(siteID %in% res_hek_proteinasek_glyco$more_than_1change$siteID),
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_hline(yintercept = -log10(0.05), linetype =3)+
+  geom_vline(xintercept = 0, linetype =3)+
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  #facet_grid( ~ dataset, scales = "free") +
+  # theme_bw(14) +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change\nctl-ProteinaseK", y = "-log10 p-value")
+```
+
+
+```{r}
+ggplot(
+  res_hek_proteinasek_glyco$limma_results%>% 
+    mutate(siteID = paste0(Protein.ID, "_", n_position)) %>% 
+    filter(siteID %in% res_hek_proteinasek_glyco$more_than_1change$siteID),
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_wrap( ~ glycan_type,  ncol = 3) +
+  theme(panel.grid = element_blank()) +
+  labs(x = "log2 fold-change\nctl-ProteinaseK", y = "-log10 p-value")
+
+ggplot(
+  res_hek_proteinasek_glyco$limma_results%>% 
+    mutate(siteID = paste0(Protein.ID, "_", n_position)) %>% 
+    filter(siteID %in% res_hek_proteinasek_glyco$more_than_1change$siteID),
+  aes(x = logFC, y = -log10(P.Value), colour = direction)
+) +
+  geom_point(alpha = 0.5, stroke = 0) +
+  #geom_text_repel(aes(label = Gene), size =2) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_wrap( ~ bin,  ncol = 3) +
+  theme(panel.grid = element_blank()) +
+  labs(x =  "log2 fold-change\nPNGase-ctl", y = "-log10 p-value")
+```
+
+# Add mouse gene
+
+```{r}
+library(babelgene)
+conversion <- distinct(res_hek_proteinasek_glyco$limma_results, Gene)
+conversion <- orthologs(genes = conversion$Gene , human = TRUE, species = "Mus musculus")
+
+res_hek_proteinasek_glyco$limma_results <- res_hek_proteinasek_glyco$limma_results %>% 
+  left_join(conversion %>% select(mouse_gene = symbol, Gene = human_symbol))
+```
+
+# Save
+
+```{r}
+save(res_hek_proteinasek_glyco, file = paste0("~/Documents/01_repos/Glycoproteomics/results/", Sys.Date(), "_res_hek_proteinasek_glyco.RData"))
+```
+
+
+
+
+```{r}
+
+```
+

@@ -7,7 +7,7 @@ output:
     theme: united
     code_folding: hide
 editor_options: 
-  chunk_output_type: inline
+  chunk_output_type: console
 ---
 
 # General settings
@@ -340,6 +340,56 @@ plot_data %>%
   scale_fill_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
   labs(y = "log2(NP40/SDS)", x = "N position in protein") +
   labs(subtitle = "Slc1a2|Eaat2", fill = "change in\nmicrobiome data")
+```
+
+
+```{r}
+m_hits <- res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  ungroup() %>% 
+  filter(contrast == "community-germfree" & dataset == "glyco") %>% 
+  distinct(ID, direction) 
+
+plot_data <- res_mouse_brain_solubility$solubility_ratios %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  filter(Gene == "Lrp1") %>%
+  separate(variable, into = c("replicate", "dataset")) %>%
+  dplyr::rename(ratio = value) %>%
+  mutate(
+    n_position = as.factor(n_position)
+    # colouring = ifelse(dataset == "glyco", glycan_type, "FP")
+  ) %>%
+  mutate(
+    # colouring = factor(colouring, levels = order),
+    log2_ratio = log2(ratio)
+  ) %>%
+  drop_na()
+
+prot_median <- plot_data %>%
+  filter(dataset == "FP") %>%
+  group_by(Protein.ID) %>%
+  summarise(median_ratio = median(log2_ratio))
+
+plot_data %>%
+  filter(dataset != "FP") %>%
+  group_by(Protein.ID, n_position, glycan_type, ID) %>%
+  summarise(ratio = mean(ratio), .groups = "drop") %>%
+  mutate(glycan_type = factor(glycan_type, levels = names(pal))) %>%
+  inner_join(m_hits) %>% 
+  ggplot(aes(
+    x = n_position,
+    y = log2(ratio),
+    fill = direction,
+    label = ID
+  )) +
+  geom_hline(yintercept = c(prot_median$median_ratio), colour = c("grey")) +
+  geom_hline(yintercept = 0, colour = c("black")) +
+  ggforce::geom_sina(size = 4, alpha= 0.5, stroke =NA, shape = 21) +
+  stat_summary(aes(group = direction, colour = direction), fun = mean, geom = "crossbar", pos = "dodge",  linewidth = 0.4) +
+  scale_colour_manual(values = c("down"= "dodgerblue4","no change" = "lightgrey","up" = "indianred")) +
+  scale_fill_manual(values = c("down" = "dodgerblue4","no change" = "lightgrey","up" = "indianred")) +
+  labs(y = "log2(NP40/SDS)", x = "N position in protein") +
+  labs(subtitle = "Lrp1", fill = "change in\nmicrobiome data") +
+   theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) 
 ```
 
 

@@ -439,6 +439,45 @@ for (hit in c("Grin2a")){
 ```
 
 
+
+```{r, eval = F}
+hits <- res_microbiome_mousebrain_Nglyco$limma_results %>% 
+  filter(dataset == "glyco" & hit == "hit") %>% 
+  distinct(Gene) %>% 
+  filter(!is.na(Gene))
+
+FCs <- res_microbiome_mousebrain_Nglyco$limma_results  %>% 
+  filter(dataset == "glyco"& contrast == "community-germfree") %>% 
+  mutate(glycoID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications)) %>% 
+  distinct(glycoID, logFC, hit)
+
+
+for (hit in c("Lrp1")){
+  p <- res_microbiome_mousebrain_Nglyco$psm_anno %>% 
+  filter(Gene == hit) %>% 
+    mutate(glycoID = paste0(Protein.ID, "_", Modified.Peptide, "_", Observed.Modifications)) %>% 
+    left_join(FCs, by = "glycoID") %>% 
+    filter(!is.na(Gene)) %>% 
+    mutate(row = ifelse(as.numeric(glyco_position) < 2600, "lower", "upper")) %>% 
+  ggplot(aes(x = as.factor(glyco_position), y = cleaned_glycosignal, colour = microbiome, group = reorder(Modified.Peptide, -abs(logFC)))) +
+    geom_hline(yintercept = 0, linetype = 3) +
+  #geom_boxplot() + 
+  geom_point(position =position_dodge(width = 0.7), alpha = 0.5, size =2) +
+  theme(legend.position = "right") +
+  scale_colour_manual(values  = c("germfree" = "#7D9FC5", "community" = "#C11555", "monocolonized" = "darkseagreen")) +
+  #facet_wrap(~Gene, scales = "free", ncol = 2)  +
+  labs(x = "glycosite positon", y = "log2 normalized\nglycopeptide intensity",
+       #title = unique(na.omit(res_microbiome_mousebrain_Nglyco$limma_results$Protein.Description[res_microbiome_mousebrain_Nglyco$limma_results$Gene == hit])),
+       subtitle = hit
+       ) +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)) +
+    lims(y = c(-1.6, 1.6)) +
+    facet_wrap(~row, nrow = 2, scales = "free")
+  plot(p)
+}
+```
+
+
 ```{r, eval = F}
 for (hit in c("Podxl2")){
   p <- res_microbiome_mousebrain_Nglyco$psm_anno %>% 
@@ -577,6 +616,23 @@ res_fpTPP_mousebrain_microbiome$FP_irs_norm_sclaed %>%
     scale_colour_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555")) +
    scale_fill_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555")) +
   labs(x = "temperature (C)", y = "soluble fraction", subtitle = "Cntnap1")
+```
+
+
+```{r}
+res_fpTPP_mousebrain_microbiome$FP_irs_norm_sclaed %>%
+  filter(Gene == "Lrp1") %>% 
+  separate(sample, into = c("group", "replicate"), sep = "_") %>% 
+    ggplot(aes(x = as.numeric(temperature), 
+               y = quant_scaled, 
+               colour = group, fill = group, shape = replicate, group = paste(replicate, group))) +
+  geom_hline(yintercept = c(1), linetype = 3) +
+    geom_point() +
+    #geom_line() +
+    geom_smooth(alpha = 0.2,  method = 'loess', formula = 'y ~ x') +
+    scale_colour_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555")) +
+   scale_fill_manual(values = c("germfree" = "#7D9FC5", "community" = "#C11555")) +
+  labs(x = "temperature (C)", y = "soluble fraction", subtitle = "Lrp1")
 ```
 
 
