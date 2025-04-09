@@ -10,11 +10,9 @@ This repostory summarises work for the publication:\
 **Uncovering protein glycosylation dynamics and heterogeneity using deep quantitative glycoprofiling (DQGlyco)**\
 
 Read the paper: https://www.nature.com/articles/s41594-025-01485-w \
-Interactive visualisation & result download: https://apps.embl.de/glycoapp/
+Interactive visualisation & result download: https://apps.embl.de/glycoapp/ \
 
-## Contact
-
-For further questions, please open an issue or contact: mira.burtscher(a)embl.de
+Please find a description for the example analysis workflow at the bottom.
 
 ## Background
 
@@ -50,9 +48,15 @@ The structural analysis code can be found in [*analysis/structural_analysis*](an
 
 ### 3. Example analysis
 
-The example analysis in [*analysis/example_analysis*](analysis/example_analysis) comes as a quarto file which can be downloaded and executed or as an interactie html to explore. We provide the data to try this workflow script in the contained data folder.
+The example analysis in [*analysis/example_analysis*](analysis/example_analysis) comes as a quarto file which can be downloaded and executed or as an interactive html to explore. We provide the data to try this workflow script in the contained data folder.
 
+To use it:\
+- Clone or download this repository (green button at the top, then click downlaod as zip) \
+- Unzip the downloaded folder and unzip the data folder in  [*analysis/example_analysis*](analysis/example_analysis) \
+- Navigate to the script [*analysis/example_analysis/DQGlyco_exampleanalysis.qmd*](analysis/example_analysis/DQGlyco_exampleanalysis.qmd), open it with RStudio and follow the steps \
 
+## Contact
 
+For further questions, please open an issue or contact: mira.burtscher(a)embl.de
 
 
