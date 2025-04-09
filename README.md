@@ -50,10 +50,10 @@ The structural analysis code can be found in [*analysis/structural_analysis*](an
 
 The example analysis in [*analysis/example_analysis*](analysis/example_analysis) comes as a quarto file which can be downloaded and executed or as an interactive html to explore. We provide the data to try this workflow script in the contained data folder.
 
-To use it:\
-- Clone or download this repository (green button at the top, then click downlaod as zip) \
-- Unzip the downloaded folder and unzip the data folder in  [*analysis/example_analysis*](analysis/example_analysis) \
-- Navigate to the script [*analysis/example_analysis/DQGlyco_exampleanalysis.qmd*](analysis/example_analysis/DQGlyco_exampleanalysis.qmd), open it with RStudio and follow the steps \
+To use it:
+- Clone or download this repository (green button at the top, then click downlaod as zip) 
+- Unzip the downloaded folder and unzip the data folder in  [*analysis/example_analysis*](analysis/example_analysis) 
+- Navigate to the script [*analysis/example_analysis/DQGlyco_exampleanalysis.qmd*](analysis/example_analysis/DQGlyco_exampleanalysis.qmd), open it with RStudio and follow the steps 
 
 ## Contact
 
