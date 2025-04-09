@@ -4,13 +4,13 @@
 
 ![Repository summarising all analysis related to the DQGlyco paper.](DQGlyco_logopng.png)
 
-## Publication and Data
+## Related publication
 
 This repostory summarises work for the publication:\
-**Uncovering protein glycosylation dynamics and heterogeneity using deep quantitative glycoprofiling (DQGlyco)**\
+**Uncovering protein glycosylation dynamics and heterogeneity using deep quantitative glycoprofiling (DQGlyco)**
 
 Read the paper: https://www.nature.com/articles/s41594-025-01485-w \
-Interactive visualisation & result download: https://apps.embl.de/glycoapp/ \
+Interactive visualisation & result download: https://apps.embl.de/glycoapp/ 
 
 Please find a description for the example analysis workflow at the bottom.
 
