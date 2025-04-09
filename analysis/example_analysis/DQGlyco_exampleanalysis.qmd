@@ -1,0 +1,1010 @@
+---
+title: "Glycoproteomics of 6 mouse brain regions"
+execute: 
+  warning: false
+format:
+  html:
+    theme: minty
+    code-tools: true
+    toc: true
+    toc-depth: 3
+    embed-resources: true
+    code-block-border-left: "#78c2ad"
+    code-block-bg: true
+    highlight-style: github
+---
+
+# Background
+
+To demonstrate the power of our DQGlyco approach, we quantified protein N-glycosylation across six distinct brain regions (each in biological triplicates). Since different brain regions serve different functions - and glycosylation plays a key role in modulating protein activity - we hypothesized that these functional differences might be mirrored in region-specific glycosylation patterns
+
+Here, we show exemplary data analysis strategies for datasets generated with DQGlyco using this dataset. The analysis is divided into different processing and analysis sections 1. - 5. First, the glycoproteomics data is processed, then the full proteome data, before both datasets are then combined to perform downstream analyses. Processing includes multiple filtering formatting and normalisation steps. Data analysis typically starts with a differential expression analysis. Additional downstream analyses depend on the experimental design and biological question and can include for example: pathway/GO enrichment analysis on gene level, domain enrichment analyses on site level, subcellular annotations, site level statistics (number of forms, fraction of hits), investigation of the structural context, comparison of fractional intensities across conditions or visualisation of individual glycopeptides and glycoproteins.
+
+# Data information and experimental design
+
+The following MSFragger output files are used for analysis:
+
+[glyco:]{.underline} smb://savitski.embl.de/savitski/01_users/Clement/Glyco_Nat_protocols/Brain_regions/Glyco_2/Brain_regions_glyco_psm.tsv [FP:]{.underline} smb://savitski.embl.de/savitski/01_users/Clement/Glyco_Nat_protocols/Brain_regions/FP/MSFragger/protein.tsv
+
+TMT channel annotation:
+
+1-3: Cerebral cortex\
+4-6: Hippocampus\
+7-9: Olfactory bulbs\
+10-12: Midbrain\
+13-15: Pons-medulla\
+16-18: Cerebellum\
+
+# 0. General
+
+Before starting the analysis, packages, functions and plotting parameters are loaded to initialize the session.
+
+## Packages
+
+First we need to install and load all software packages used for the analysis. The installation only has to occur once.
+
+### Package installation
+
+This code has to be executed once to install all packages required for the analysis. Please install all additional packages which are potentially used in the background if R tells you to do so.
+
+```{r, eval = F}
+install.packages(c("BiocManaager", "tidyverse", "reshape2", "ggrepel", "here", "cowplot", "ggpubr", "ggforce", "matrixStats", "msigdbr", "plotly"))
+BiocManager::install(c("limma", "vsn", "decoupleR"))
+```
+
+### Load packages
+
+Load required packages and make sure to avoid certain conflicts. Set the working directory, which should contain the MSFragger output files in a data folder.
+
+```{r, message=F, warning =F}
+# for data operations
+library(tidyverse) 
+library("reshape2")
+library(ggrepel)
+library(here)
+
+# for plotting
+library(cowplot)
+library(ggpubr)
+library(ggforce)
+library(plotly)
+
+# for analysis
+library(limma)
+library(matrixStats)
+library(vsn)
+library(msigdbr)
+library(decoupleR)
+
+# avoid some conflicts
+mutate <- dplyr::mutate
+select <- dplyr::select
+group_by <- dplyr::group_by
+filter <- dplyr::filter
+
+setwd("~/Documents/01_repos/DQGlyco/")
+```
+
+## Plotting
+
+We define some plotting defaults and colour scales.
+
+```{r}
+theme_set(cowplot::theme_cowplot(font_size = 15) + theme(panel.grid.major = element_line(colour = "lightgrey", linewidth = 0.2), panel.grid.minor = element_line(colour = "lightgrey", linewidth = 0.2)))
+
+options(
+  ggplot2.discrete.colour = c("mediumvioletred", "cornflowerblue", "mediumseagreen", "goldenrod2", "lightsalmon2", "red3"),
+  ggplot2.discrete.fill = c("mediumvioletred", "cornflowerblue", "mediumseagreen", "goldenrod2", "lightsalmon2", "red3")
+)
+
+tilted <- theme(axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1))
+blank <- theme(axis.text.x = element_blank(), axis.ticks.x = element_blank())
+
+pal <- c("lightgrey", "#d7301fff", "#377eb8ff", "#41ae76ff", "#88419dff", "#ff7f00ff", "#ffe300ff", "#f781bfff", "mediumseagreen", "grey")
+names(pal) <- c("FP", "sialylated", "fucosylated", "high mannose", "complex/hybrid", "phospho", "paucimannose", "small", "hit", "no hit")
+```
+
+## Functions
+
+We define some custom functions to process MSFragger outputs, perform data normalisation and generate PCA plots. More explanation is provided when the function is used during the analysis.
+
+```{r}
+# function to read and processes MSFragger psm.tsv output
+glyco_psm_processing <- function(
+    path, # path to psm file
+    dataset = NA, # optional, assing a dataset name
+    species = NA, # optional, assign a species name
+    version = 20, # define a MSFragger version
+    qvalue_cutoff = 0.05, # set glycan q-value cutoff
+    purity_cutoff = 0 # define TMT purity
+    ) {
+  psm <- read_tsv(path, col_types = cols()) %>%
+    mutate(dataset = dataset, species = species) %>%
+    # deal with inconvenient column names
+    rename_with(~ gsub(" ", ".", .x))
+
+  # make sure to use correct column downstream, changes depending on version
+  if (version == "21") {
+    print("Renaming columns of yet another MSFragger version")
+    psm$Observed.Modifications_new <- psm$Observed.Modifications
+    psm$Observed.Modifications <- psm$Total.Glycan.Composition
+  }
+
+
+  psm <- psm %>%
+    # extract glycopeptides and position information
+    mutate(
+      modification = ifelse(grepl("N\\(", Assigned.Modifications), "glycosylation", "unmodified"),
+      glycosylation = str_extract_all(Assigned.Modifications, "\\d+N"),
+      n_position = as.numeric(str_extract(glycosylation, "\\d+")) + Protein.Start - 1,
+      # add mass bin information
+      mass = str_extract(Observed.Modifications, " .+$"),
+      mass = as.numeric(str_replace(mass, " % ", "")),
+      bin = cut(mass, breaks = seq(0, 8000, 500))
+    ) %>%
+    # extract glycan_type
+    separate(Observed.Modifications, into = c("glycan_content", "modification_mass"), sep = " % ", remove = F) %>%
+    separate(glycan_content, into = c("hexnac", "hexnac_content", "hex", "hex_content", "end"), sep = "\\(|\\)", extra = "merge", remove = FALSE) %>%
+    mutate(
+      hexnac_content = as.numeric(hexnac_content),
+      hex_content = as.numeric(hex_content),
+      end = ifelse(is.na(end), "", end)
+    ) %>%
+    mutate(glycan_type = case_when(
+      grepl("Phospho", glycan_content) ~ "phospho",
+      grepl("NeuAc|NeuGc", glycan_content) ~ "sialylated",
+      grepl("Fuc", glycan_content) ~ "fucosylated",
+      hexnac_content == 2 & hex_content > 3 & end == "" ~ "high mannose",
+      hexnac_content == 2 & hex_content %in% 1:3 & end == "" ~ "paucimannose",
+      hexnac_content <= 2 & hex == "" & end == "" ~ "small",
+      TRUE ~ "complex/hybrid"
+    )) %>%
+    mutate(glycosylation = as.character(glycosylation)) %>%
+    # for TMT data: filter by Purity
+    filter(Purity > purity_cutoff) %>%
+    # filter based on glycan q-value
+    filter(!(modification == "glycosylation" & `Glycan.q-value` > qvalue_cutoff))
+
+  # generate a version with only glycopeptides
+  psm_glyco <- psm %>%
+    filter(modification == "glycosylation")
+
+  # calculcate identification overview
+  summary <- data.frame(
+    n_proteins = length(unique(psm_glyco$Protein.ID)),
+    n_peptides = nrow(distinct(psm_glyco, Protein.ID, Modified.Peptide, Observed.Modifications)),
+    n_sites = nrow(distinct(psm_glyco, Protein.ID, n_position)),
+    dataset = dataset,
+    species = species
+  )
+
+
+  # generate result object with glyco, total and summary tables
+  res <- list("psm" = psm_glyco, "summary" = summary, "psm_total" = psm)
+}
+
+# perform vsn normalisation on long df per peptide/protein and give back in right format
+normalisation_melted_ptm <- function(
+    df # a dataframe containg and ID, sample and quant column
+    ) {
+  # transform into a matrix and sum up psms
+  m <- acast(df, ID ~ sample, value.var = "quant", fun.aggregate = function(x) sum(x, na.rm = T))
+  # remove missing values
+  m[m == 0] <- NA
+  m <- m[complete.cases(m), ]
+  # QC before normalisation
+  print("QC: mean-sd relationship before normalisation")
+  vsn::meanSdPlot(log2(m))
+  # perform vsn normalisation
+  m_norm <- limma::normalizeVSN(m)
+  # QC after normalisation
+  print("QC: mean-sd relationship after normalisation")
+  vsn::meanSdPlot(m_norm)
+  # trasnform back to long df
+  df <- melt(m_norm, value.name = "quant_norm", varnames = c("ID", "sample")) %>%
+    inner_join(
+      # rejoin with raw quant, sum upo psms to peptides here too
+      df %>%
+        group_by(across(c(-quant))) %>%
+        summarise(quant = sum(quant, na.rm = T)),
+      by = c("ID", "sample")
+    ) %>%
+    #distinct(ID, quant_norm, .keep_all = T) %>%
+    mutate(quant_norm = ifelse(is.na(quant), NA, quant_norm))
+  return(tibble::tibble(df))
+}
+
+# function to generate PCA plot from intensity matrices using the top10% most variable features
+pca_plot <- function(
+    data_matrix, # intensity matrix, rownames should follow this format: condition_replicate
+    x, # PC of the x coordinate
+    y, # PC of the y coordinate
+    fx=1, # x orientation
+    fy=1, # y orientation
+    l, # lower plotting limit
+    u, # upper plotting limit
+    pal, # vector with colour palette
+    title # title charcater
+    ) {
+  m <- data_matrix
+  n_obs <- nrow(m)
+
+  # 10perc most variable features
+  m <- m[matrixStats::rowVars(m, na.rm = T) %>%
+    order(decreasing = T) %>%
+    head((n_obs / 100) * 10), ]
+
+  # calculate PCA
+  pca <- prcomp(t(m))
+  
+  # extract PCs relevant for plotting
+  data <- pca$x %>%
+    as.data.frame() %>%
+    rownames_to_column("sample") %>%
+    select(sample, x = {{ x }}, y = {{ y }}) %>%
+    separate(sample, c( "condition", "replicate"), sep = "_", remove = F) 
+  
+  # extract explained variance
+  var <- (pca$sdev)^2 / sum(pca$sdev^2) * 100
+  vx <- as.numeric(str_extract(as.character({{ x }}), "\\d"))
+  vy <- as.numeric(str_extract(as.character({{ y }}), "\\d"))
+
+  # plot
+  p <- data %>%
+    ggplot(aes(x = x * fx, y = y * fy, colour = condition, shape = replicate)) +
+    geom_hline(yintercept = 0, colour = "lightgrey", linetype = 3) +
+    geom_vline(xintercept = 0, colour = "lightgrey", linetype = 3) +
+    geom_point(size = 4) +
+    scale_colour_manual(values = pal) +
+    cowplot::panel_border() +
+    coord_fixed() +
+    lims(x = c(l, u), y = c(l, u)) +
+    labs(
+      x = paste0(as.character({{ x }}), " (", round(var[vx], digits = 1), "%)"),
+      y = paste0(as.character({{ y }}), " (", round(var[vy], digits = 1), "%)"),
+      subtitle = title
+    )
+
+  plot(p)
+}
+```
+
+# 1. Glycoproteomics data processing
+
+## a) Load and annotate data
+
+Process the glycoproteome psm.tsv output using the custom glyco_psm_processing() function.
+
+**CRITICAL make sure to adjust the path to the folder where you stored the MSFragger output data and adjust the name of the file!**
+
+This enables the filtering of glycoPSMs to keep PSMs with a glycan q-value \< 0.05 and purity \> 0.5 to exclude precursors affected by co-isolation interference. This function returns three tables:
+
+-   psm: all glycoPSMs (PSMs with an assigned modification on a N residue and an assigned glycan composition) passing the filtering criteria
+
+-   psm_total: all PSMs passing the filtering criteria
+
+-   summary: ID summary of glycopeptides, glycosites and glycoproteins passing the criteria
+
+**CRITICAL Make sure to check the column names of the psm file, as they change depending on the MSFrager version!**
+
+We the annotate the table with meatadata for the TMT channels. This could also be done by importing a metadata table which has a sample column that matches the sample column names of the MSFragger output.
+
+**CRITICAL Make sure to match the sample column format of the TMT annotation to the MSFragger output sample column name format!**
+
+```{r}
+# preprocess psm.tsv search output
+res_Mm_brainregions <- glyco_psm_processing(
+  path = here::here("analysis/example_analysis/data/psm.tsv"), 
+  dataset = "glycoTMT", 
+  species = "mus musculus", 
+  purity_cutoff = 0.5, 
+  version = "21", 
+  qvalue_cutoff = 0.05)
+
+# add TMT channel info, can also be metadata file
+res_Mm_brainregions$TMT_info <- data.frame(
+  sample = c(
+    "sample-01", "sample-02", "sample-03",
+    "sample-04", "sample-05", "sample-06",
+    "sample-07", "sample-08", "sample-09",
+    "sample-10", "sample-11", "sample-12",
+    "sample-13", "sample-14", "sample-15", 
+    "sample-16", "sample-17", "sample-18"
+  ),
+  condition = c(rep("Cerebral cortex", 3), rep("Hippocampus", 3), rep("Olfactory bulbs", 3), rep("Midbrain", 3), rep("Pons-medulla", 3), rep("Cerebellum", 3)),
+  replicate = rep(c("rep1", "rep2", "rep3"), 6)
+)
+```
+
+## b) QC: identification overview
+
+First we visualise the number of peptides, sites and proteins which we detected and passed the filtering (fdr, purity, glycan q-value). This gives us a first idea whether the experiment worked, as we expect around \~50k glycopeptides for this type of experiment.
+
+```{r}
+res_Mm_brainregions$summary %>% 
+  melt(variable.name = "entity", value.name = "identifications") %>% 
+  mutate(entity = factor(entity, levels = c("n_peptides", "n_sites", "n_proteins"))) %>% 
+  ggplot(aes(x = entity, y = identifications)) +
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = identifications), vjust = -0.5) +
+  lims(y = c(0, 52000)) +
+  tilted +
+  labs(subtitle = "Identification overview\n(filtered)")
+```
+
+Second we calculate enrichment specificity on psm level which is an important quality control and should be around 80-90%.
+
+```{r}
+res_Mm_brainregions$psm_total %>%  
+  group_by(Protein.ID, Modified.Peptide, modification) %>% 
+  group_by(modification) %>% 
+  summarise(n = n()) %>% 
+  ggplot(aes(x = modification, y = n, label = n)) +
+  geom_bar(stat = "identity") +
+  geom_text(position = position_stack(vjust = 0.5), colour = "white") +
+  tilted +
+  labs(subtitle = "Enrichment specificty (psm level)", y = "identifications")
+
+```
+
+## c) Filtering and normalisation
+
+Next, the data must be filtered and normalized. The filtering and normalization process comprises the following steps:
+
+-   Transform data from wide matrix to long format to add additional information
+
+-   Add sample/TMT channel info
+
+-   Generate unique ID per glycopeptide containing Uniprot ID, gene name, glycopeptide sequence, glycan composition and molecular weight, glycan class and glycosylation site within the protein (for example: A0A0A6YY83_Pcdh7_SATATVSLFVMDENDNAPTVTLPRN\[2069\]ISYTLLPPSSNVR_HexNAc(5)Hex(4)NeuAc(1)%1954.7036_sialylated_747)
+
+-   Sum PSMs intensities mapping to a unique ID to obtain peptide intensities
+
+-   Remove peptides with incomplete quantification, i.e. all TMT channels used must have a quantification value.
+
+    **CRITICAL This depends on the experimental design, but note that VSN normalization ignores NA values but is affected by 0 values. Here, all incomplete features are automatically removed as part of the custom normalization function.**
+
+-   Optional: To assess glycopeptide abundance changes without protein abundance correction, perform VSN normalization (alternatively median or quantile normalization can be performed). Here, all samples are normalized together as no difference in their global intensity distribution is expected. This can vary depending on the dataset.
+
+    **CRITICAL Normalization can be applied at this stage to evaluate changes in glycopeptide abundance without correcting for protein levels (step f). However, when accounting for protein abundance using the full proteome data, this correction is performed on the raw, non-normalized glycopeptide intensities. Normalization is then applied to the protein-corrected values to. This procedure ensures that observed differences reflect true glycoproteome dynamics rather than variations in overall protein expression. In this analysis, we followed the latter approach (i.e. step f was not performed).**
+
+```{r}
+res_Mm_brainregions$psm_normalised <- tt <-  res_Mm_brainregions$psm %>%
+  select(Protein.ID, Gene, Peptide, Modified.Peptide, Observed.Modifications, n_position, glycan_type, Gene, matches("sample")) %>%
+  mutate(ID = paste0(Protein.ID, "_", Gene, "_", Modified.Peptide, "_", Observed.Modifications, "_", glycan_type, "_", n_position)) %>%
+  melt(
+    variable.name = "sample",
+    value.name = "quant",
+    id.vars = c("Protein.ID", "Gene", "Peptide", "Modified.Peptide", "Observed.Modifications", "n_position", "glycan_type")
+  ) %>%
+  # add TMT info
+  inner_join(
+    res_Mm_brainregions$TMT_info,
+    by = c("sample"),
+    multiple = "all"
+  ) %>%
+  mutate(
+    ID = paste0(Protein.ID, "_", Gene, "_", Modified.Peptide, "_", Observed.Modifications, "_", glycan_type, "_", n_position),
+    quant = as.numeric(quant)
+  ) %>%
+  # remove non quant rows
+  filter(quant > 0 & !is.na(quant)) %>% 
+  ungroup() %>%
+  # sum up intensity per glycopeptide, remove pepitdes with incomplete quantification, perform vsn normalization
+  group_modify(~ tibble(normalisation_melted_ptm(.)))
+```
+
+## d) QC: Reproducibility and Normalisation
+
+Calculation of technical reproducibility of raw glycopeptide intensity (Spearman correlation of biological replicates should be above 95%). Can only be done after intensity has been summed up.
+
+```{r}
+res_Mm_brainregions$psm_normalised %>%  
+  mutate(sample = paste(condition, replicate, sep = "_")) %>%
+  dcast(
+    ID ~ sample,
+    value.var = "quant", fill = NA
+  ) %>%
+  drop_na() %>%
+  column_to_rownames("ID") %>%
+  as.matrix() %>%  
+  cor(method = "spearman") %>% 
+  ComplexHeatmap::Heatmap(col = corrplot::COL1("Reds"), name = "spearman\ncorr")
+```
+
+Comparison of global intensity distribution of samples before and after normalization (median intensities of the samples should be aligned)
+
+```{r}
+ggplot(
+  res_Mm_brainregions$psm_normalised,
+  aes(x = condition, y = log2(quant), colour = replicate)
+) +
+  geom_boxplot() +
+  labs(y = "log2 intensity", subtitle = "QC: before normalisation - glycoproteome") +
+  tilted
+
+ggplot(
+  res_Mm_brainregions$psm_normalised,
+  aes(x = condition, y = quant_norm, colour = replicate)
+) +
+  geom_boxplot() +
+  labs(y = "log2 intensity", subtitle = "QC: after normalisation - glycoproteome") +
+  tilted
+```
+
+A PCA allows for a first investigation of the data quality and the variation in the data.
+
+**CRITICAL investigate carefully to assess for batch effects or group structures in the data which should be considered for analysis**
+
+```{r}
+res_Mm_brainregions$psm_normalised %>%
+  mutate(sample = paste(condition, replicate, sep = "_")) %>%
+  dcast(
+    ID ~ sample,
+    value.var = "quant_norm", fill = NA
+  ) %>%
+  drop_na() %>%
+  column_to_rownames("ID") %>%
+  as.matrix() %>% 
+  pca_plot("PC1", "PC2", 1, 1, -100, 100, pal = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E" ,"#E6AB02"), title = "glyco")
+```
+
+# 2. Full proteome data processing
+
+To assess differences in glycopeptide abundance between the different brain regions it makes sense to do so independently of protein abundance differences. To this end we also acquired a matched full proteome dataset which is processed in this section.
+
+## a) Load and annotate data
+
+First, we load the protein.tsv search output from MSFragger which is already filtered for FDR etc. We only optimise column names and remove proteins which are classified as contaminants.
+
+```{r}
+res_Mm_brainregions$FP <- read_tsv(here::here("analysis/example_analysis/data/protein.tsv")) %>%
+  # make column names more useful
+  rename_with(~ gsub(" ", ".", .x)) %>%
+  # remove contaminants
+  filter(grepl("Mus", Organism) & !(grepl("contam", Protein)))
+```
+
+## b) Filtering and normalisation
+
+Similar to the glycoproteomics data processing we reformat and normalise the full proteome data.
+
+-   transform data from wide to long df
+
+-   add sample info
+
+-   generate unique ID per protein (out of Gene and uniProt identifier)
+
+-   remove proteins with incomplete quantification
+
+-   perform vsn normalization
+
+-   check normalisation using QC plots described above
+
+```{r}
+res_Mm_brainregions$FP_normalised <- res_Mm_brainregions$FP %>%
+  select(Protein.ID, Gene, matches("sample")) %>%
+  melt(variable.name = "sample", value.name = "quant", id.vars = c("Protein.ID", "Gene")) %>%
+  # add TMT info
+  inner_join(
+    res_Mm_brainregions$TMT_info,
+    by = "sample"
+  ) %>%
+  # unique ID
+  mutate(
+    ID = Protein.ID,
+  ) %>%
+  # make sure to remove incomplete features
+  filter(!is.na(Protein.ID) & !is.na(quant) & quant > 0) %>%
+  ungroup() %>%
+  # perform normalisation
+  group_modify(~ tibble(normalisation_melted_ptm(.)))
+```
+
+## c) QC: Normalisation
+
+```{r}
+# check normalisation
+ggplot(
+  res_Mm_brainregions$FP_normalised,
+  aes(x = condition, y = log2(quant), colour = replicate)
+) +
+  geom_boxplot() +
+  labs(y = "log2 intensity", subtitle = "QC: before normalisation - full proteome") +
+  tilted
+
+ggplot(
+  res_Mm_brainregions$FP_normalised,
+  aes(x = condition, y = quant_norm, colour = replicate)
+) +
+  geom_boxplot() +
+  labs(y = "log2 intensity", subtitle = "QC: after normalisation - full proteome") +
+  tilted
+```
+
+A PCA allows for a first investigation of the data quality and the variation in the data.
+
+**CRITICAL investigate carefully to assess for batch effects or group structures in the data which should be considered for analysis, also in comparison to the glycoproteome!**
+
+```{r}
+res_Mm_brainregions$FP_normalised %>%
+  mutate(sample = paste(condition, replicate, sep = "_")) %>%
+  dcast(
+    Protein.ID ~ sample,
+    value.var = "quant_norm", fill = NA
+  ) %>%
+  drop_na() %>%
+  column_to_rownames("Protein.ID") %>%
+  as.matrix() %>% 
+  pca_plot("PC1", "PC2", 1, 1, -40, 30, pal = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E" ,"#E6AB02"), title = "glyco")
+```
+
+# 3. Glycopeptide Intensity-correction
+
+Until this point, the glycoproteome and whole proteome datasets have been analyzed separately, now we correct glycopeptide abundance differences for protein expression variation. Beware, that there are different strategies to achieve this, but no best practice defined.
+
+## a) Prepare input table
+
+To account for changes in protein abundance when assessing glycopeptide variations, a combined dataset is generated that includes both glycopeptide intensities and their corresponding matched protein intensities. This results in a table which contains columns for glycopeptide and corresponding protein intensities.
+
+**CRITICAL At this stage, glycopeptides corresponding to proteins not quantified in the full proteome dataset are excluded from the analysis.**
+
+```{r}
+# combine glycopeptide with matched protein intensity
+data <- res_Mm_brainregions$psm_normalised %>%
+  dplyr::select(Protein.ID, ID, sample, glyco_intensity = quant) %>%
+  # add FP data
+  inner_join(
+    res_Mm_brainregions$FP_normalised %>%
+      dplyr::select(Protein.ID, sample, total_intensity = quant),
+    by = c("sample", "Protein.ID")
+  )
+```
+
+## b) Ratio-based correction
+
+Subsequently, the corrected glycopeptide intensities are calculated based on the respective protein intensity in the different samples using a ratio-based approach (an alternative linear model based approach is described in the original publication).  
+
+$intensity_corrected= (glycopeptide intensity/protein intensity)/(median glycopeptide intensity/median protein intensity) * median glycopeptide intensity$\
+\
+Where:
+
+-   intensity corrected - protein abundance corrected intensity of a glycopeptide assigned to protein p in condition c 
+
+-   glycopeptide intensity - raw intensity of this glycopeptide in condition c
+
+-   protein intensity - raw protein intensity of protein p in condition c
+
+-   median glycopeptide intensity - median raw intensity for all glycopeptides of protein p across all conditions
+
+-   median protein intensity - median raw intensity of protein p across all conditions
+
+After the correction:
+
+-   Perform VSN normalization on the corrected intensities. Here, all samples are normalized together as no difference in their global intensity distribution is expected. This can vary depending on the dataset.
+
+-   Check normalisation and data structure again as described above (distributions, PCA plots).\
+
+```{r}
+# perform intensity correction per peptide
+corrected_intensities <- data %>%
+  group_by(Protein.ID) %>%
+  mutate(
+    median_ptm = median((glyco_intensity), na.rm = TRUE),
+    median_proteomics = median((total_intensity), na.rm = TRUE)
+  ) %>%
+  ungroup() %>%
+  mutate(nominator_norm = (glyco_intensity / total_intensity)) %>%
+  mutate(denominator_factor = (median_ptm / median_proteomics)) %>%
+  mutate(quant_corrected = ((nominator_norm / denominator_factor) * median_ptm)) %>%
+  ungroup() %>%
+  dplyr::select(ID, quant_corrected, sample) %>%
+  # perform vsn normalisation on corrected intensities
+  acast(
+    ID ~ sample,
+    value.var = "quant_corrected", fill = NA
+  ) %>%
+  limma::normalizeVSN()
+
+res_Mm_brainregions$psm_normalised <- corrected_intensities %>%
+  # reformat to long df and combine with additional information
+  as.data.frame() %>%
+  rownames_to_column("ID") %>%
+  melt(variable.name = "sample", value.name = "quant_norm_corrected") %>%
+  inner_join(res_Mm_brainregions$psm_normalised, by = c("ID", "sample"))
+```
+
+After the correction we again need to check the validity of the normalisation.
+
+```{r}
+vsn::meanSdPlot(corrected_intensities) 
+
+# check intensity distribtions 
+ggplot(
+  res_Mm_brainregions$psm_normalised,
+  aes(x = condition, y = quant_norm_corrected, colour = replicate)
+) +
+  geom_boxplot() +
+  labs(y = "log2 intensity", subtitle = "glyco") +
+  tilted
+```
+
+## c) QC
+
+Again we check data variance structures performing a PCA.
+
+**CRITICAL investigate carefully to assess for batch effects or group structures in the data which should be considered for analysis**
+
+```{r}
+res_Mm_brainregions$psm_normalised %>%
+  mutate(sample = paste(condition, replicate, sep = "_")) %>% 
+  dcast(
+    ID ~ sample,
+    value.var = "quant_norm_corrected", fill = NA
+  ) %>% 
+  drop_na() %>%
+  column_to_rownames("ID") %>%
+  as.matrix() %>% 
+  log2 %>% 
+  pca_plot("PC1", "PC2", 1, 1, -10, 7, pal = c("#1B9E77", "#D95F02", "#7570B3", "#E7298A", "#66A61E" ,"#E6AB02"), title = "Corrected normalised glycointensities\ntop10%")
+```
+
+# 4. Differential expression analysis using Limma
+
+Once glycopeptide abundance can be assessed independently of protein abundance, glycopeptides or proteins with different abundance in different brain regions can be determined. For this purpose, differential expression analysis is performed per glycopeptide using Limma (alternatively EdgeR can also be used). 
+
+## a) fit linear model
+
+Limma uses three input matrices:
+
+-   eset: the actual data matrix, here with corrected glycopeptide intensities
+
+-   design_matrix: information on which condition is represented by which column in eset
+
+-   contr: a contrast matrix defining comparisons to be performed (eg to retrieve fold-changes)
+
+The design matrix is built from factors representing the eset columns.
+
+-   In this case, c\_ for condition = underlying tissue
+
+-   For datasets with a batch effect driven by e.g. the replicate a factor r\_ could be extracted from column names additionally to perform a batch effect correction during DEA.
+
+For this dataset, contrasts are defined to test each glycopeptide per brain region against the mean of the other tissues to determine potentially specific glycopeptide expression.
+
+Limma is used according to the standard steps of fitting a linear model (lmFit()), calculating the estimated coefficients for given contrasts (contrasts.fit()) and moderating the obtained fold changes etc. by empirical Bayes moderation (eBayes()).
+
+**CRITICAL Limma returns log2 fold-changes when the eset matrix is log2 transformed. In this analysis workflow, this is done as part of the VSN normalization. Please note that with other normalization methods (e.g. median or quantile normalization) the log transformation must be carried out beforehand.**
+
+```{r}
+# defining the expression set matrix., in our case only for glycopeptides with complete quant. Limma could handle NAs
+eset_glyco <- res_Mm_brainregions$psm_normalised %>%
+  mutate(sample = paste(condition, replicate, sep = "_")) %>% 
+  dcast(
+    ID ~ sample,
+    value.var = "quant_norm_corrected", fill = NA
+  ) %>% 
+  drop_na() %>%
+  column_to_rownames("ID") %>%
+  as.matrix() 
+
+# define factors to build the design matrix
+r_ <- factor(str_extract(colnames(eset_glyco), "rep\\d"))
+c_ <- factor(str_remove(colnames(eset_glyco), "_rep\\d"))
+
+# build design matrix
+design_matrix <- model.matrix(~ 0 + c_)
+design_matrix
+
+# build contrast matrix
+contr <- cbind(
+  "Cerebellum" = c(1, -1/5, -1/5, -1/5, -1/5, -1/5),
+  "cerebral cortex" = c(-1/5, 1, -1/5, -1/5, -1/5, -1/5),
+  "Hippocampus" = c(-1/5, -1/5, 1, -1/5, -1/5, -1/5),
+  "Midbrain" = c(-1/5, -1/5, -1/5, 1, -1/5, -1/5),
+  "Olfactory bulbs" = c(-1/5, -1/5, -1/5, -1/5, 1, -1/5),
+  "Pons-medulla" = c(-1/5, -1/5, -1/5, -1/5, -1/5, 1)
+)
+
+# perform differnetial analysis and eBAyes fold-change moderation
+fit_glyco <- limma::lmFit(eset_glyco, design_matrix) %>%
+  limma::contrasts.fit(., contr) %>%
+  limma::eBayes(.)
+```
+
+## b) extract results
+
+After Limma, the results are extracted and a significantly affected protein or glycopeptide is defined as a hit if a change of at least 50% (absolute logFC \> log2(1.5) = 0.585) at 5% FDR (limma’s BH adjusted p-value) is observed.
+
+```{r}
+mapping <- res_Mm_brainregions$psm %>%
+  mutate(ID = paste(Protein.ID, Modified.Peptide, Observed.Modifications, sep = "_")) %>%
+  distinct(Protein.ID, Gene, ID, n_position, glycan_type, Protein.Description) %>%
+  mutate(n_position = as.character(n_position)) %>%
+  separate(ID, into = c("Protein.ID", "Modified.Peptide", "Observed.Modifications"), sep = "_", remove = F)
+
+res_Mm_brainregions$limma_results <- tt <-
+  # extract results for all contrasts
+  lapply(colnames(fit_glyco$coefficients), function(x) {
+    limma::topTable(
+      fit_glyco,
+      coef = x,
+      number = Inf
+    ) %>%
+      mutate(contrast = x, dataset = "glyco") %>%
+      rownames_to_column(var = "ID")
+  }) %>%
+  bind_rows() %>%
+  # fromat IDs
+  separate(ID,
+    into = c("Protein.ID", "Gene", "Modified.Peptide", "Observed.Modifications", "glycan_type", "n_position"),
+    sep = "_", remove = F
+  ) %>%
+  # add protein descriptions
+  left_join(mapping %>% distinct(Protein.ID, Protein.Description)) %>%
+  # hit annotation
+  mutate(
+    hit = ifelse(abs(logFC) > log2(1.5) & adj.P.Val < 0.05, "hit", "no hit")
+  ) %>%
+  mutate(
+    direction = ifelse(logFC > 0 & hit == "hit", "up", "no change"),
+    direction = ifelse(logFC < 0 & hit == "hit", "down", direction)
+  ) %>% 
+  # add info for plot
+  mutate(info = paste(Gene, Protein.Description, glycan_type, Observed.Modifications, n_position, sep = "\n"))
+```
+
+## c) visualise results
+
+Visualize the results of the DE analysis with a volcano plot per comparison or alternatively/additionally per glycan type.
+
+Plotly can be used to generate an interactive plot.
+
+```{r, fig.width = 10}
+p <- res_Mm_brainregions$limma_results %>%
+  ggplot(aes(x = logFC, y = -log10(P.Value), colour = direction, label = info)) +
+  geom_point(size = 0.1) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_wrap( ~ contrast, nrow = 2) +
+  cowplot::panel_border() +
+  labs(x = "log2FC tissue-mean")
+
+plotly::ggplotly(p, tooltip = c("label"))
+```
+
+Alternatively, we also generate static volcano plots for export (not shown).
+
+```{r, fig.width = 10, fig.height=4, eval = F}
+res_Mm_brainregions$limma_results %>%
+  ggplot(aes(x = logFC, y = -log10(P.Value), colour = direction)) +
+  geom_point(size = 0.1) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_wrap( ~ contrast, nrow = 1) +
+  cowplot::theme_cowplot() +
+  cowplot::panel_border() +
+  labs(x = "log2fc region vs mean of all regions")
+```
+
+```{r, fig.width = 10, fig.height=4, eval = F}
+res_Mm_brainregions$limma_results %>%
+  ggplot(aes(x = logFC, y = -log10(P.Value), colour = direction)) +
+  geom_point(size = 0.1) +
+  scale_colour_manual(values = c("dodgerblue4", "lightgrey", "indianred")) +
+  facet_grid(glycan_type ~ contrast) +
+  cowplot::panel_border()
+```
+
+To examine a hit in detail, also visualize the normalized and corrected intensities for individual glycopeptides and proteins.
+
+```{r}
+res_Mm_brainregions$psm_normalised %>% 
+  filter(ID == "Q9R171_Cbln1_n[305]STNHEPSEM[147]SN[2476]R_HexNAc(7)Hex(4)Fuc(2) % 2361.8828_fucosylated_79") %>% 
+  ggplot(aes(x = condition, y = quant_norm_corrected, colour = condition)) +
+  geom_point(size = 2) +
+  stat_summary(geom ="crossbar", fun = median, width = 0.5) +
+  tilted + 
+  guides(colour = "none")
+
+res_Mm_brainregions$FP_normalised %>% 
+  filter(Protein.ID == "Q9R171") %>% 
+  ggplot(aes(x = condition, y = quant_norm, colour = condition)) +
+  geom_point() +
+   stat_summary(geom ="crossbar", fun = median, width = 0.5) +
+  tilted +
+  guides(colour = "none")
+
+hits <- res_Mm_brainregions$limma_results %>%  filter(hit == "hit")
+
+res_Mm_brainregions$limma_results %>% 
+      filter(Gene == "Cbln1" & ID %in% hits$ID) %>% 
+      mutate(Observed.Modifications = str_remove(Observed.Modifications, " .+")) %>% 
+      mutate(n_position = paste0("N", n_position)) %>% 
+      acast(n_position + Observed.Modifications ~ contrast, value.var = "t") %>% 
+      ComplexHeatmap::Heatmap(name = "t-statistic", col = circlize::colorRamp2(c(-10,0,10), c( "dodgerblue4", "grey95", "indianred")), rect_gp = grid::gpar(col = "white", lwd = 2), row_names_max_width = unit(20, "cm"))
+```
+
+## Save result object
+
+At this point we save the result object which can be used for different kinds of downstream analyses and comparisons to other datasets
+
+```{r, eval = F}
+save(res_Mm_brainregions, 
+     file = paste0("results/", Sys.Date(), "_res_Mm_brainregions.RData"))
+```
+
+# 5. Downstream analysis
+
+Downstream analyses can vary based on the experimental design and research question. Below are some examples focused on comparing glycosylation profiles across different brain regions.
+
+## a) Fold-change correlation
+
+To assess global similarities in glycosylation patterns across brain regions, fold changes or test statistics from differential expression analysis can be correlated using Pearson correlation, providing a measure of how closely glycosylation profiles align between regions.
+
+Midbrain & Pons-Medulla (Clustered Together): this makes sense because both are part of the brainstem, sharing roles in autonomic functions, motor control, and sensory processing.
+
+Hippocampus & Cerebral Cortex (Clustered Together): this is expected because the hippocampus is part of the limbic system but has strong connectivity with the neocortex, particularly in memory processing and cognition.
+
+Olfactory Bulbs & Cerebellum (More Distant): the olfactory bulbs are more functionally distinct (olfaction processing), and the cerebellum specializes in motor coordination and balance, so their separation is expected. There is also a slight correlation of the cerebellum with the pons medulla, which are anatomically close, but functionally different
+
+```{r}
+res_Mm_brainregions$limma_results %>%
+  acast(ID ~ contrast, value.var = "t") %>% 
+  cor() %>% 
+  ComplexHeatmap::Heatmap(name = "t-statistic\ncorrelation", col = circlize::colorRamp2(c(-1,0,1), c( "dodgerblue4", "grey95", "indianred")), rect_gp = grid::gpar(col = "white", lwd = 2))
+```
+
+## b) Composition analysis
+
+As a proxy for the prevalence of glycan compositions in different brain regions, their highest fractional intensities can be calculated and compared with respect to their mass or glycan class.
+
+**CRITICAL beware of log/non-log transformed scales when caluclating fractional intensities**
+
+```{r}
+# first we caluclate fractional intensities per glycan composition
+fractional_intensities <- res_Mm_brainregions$psm_normalised %>%
+  drop_na() %>% 
+  distinct(ID, Observed.Modifications, condition, replicate, quant_norm_corrected) %>% 
+  mutate(quant_norm_corrected = 2^quant_norm_corrected) %>% 
+  group_by(ID,Observed.Modifications, condition) %>% 
+  summarise(quant_norm_corrected = sum(quant_norm_corrected)) %>% 
+  group_by(ID, Observed.Modifications) %>% 
+  mutate(total_int = sum(quant_norm_corrected)) %>% 
+  ungroup() %>% 
+  mutate(frac_int = quant_norm_corrected/total_int)
+
+# extract the top10 fractional intensities. we additionally extr`ct the mass and the number of fuc/sial sugars per composition
+top10 <- fractional_intensities %>%
+  distinct(ID, Observed.Modifications, condition, frac_int) %>%
+  group_by(condition) %>%
+  # top 10%
+  slice_max(prop = 0.01, order_by = frac_int) %>%
+  distinct(condition, ID, Observed.Modifications, frac_int) %>%
+  ungroup() %>%
+  # extract mass
+  mutate(
+    mass = str_extract(Observed.Modifications, " .+$"),
+    mass = as.numeric(str_replace(mass, " % ", ""))
+  ) %>%
+  # extract number of fuc/sia
+  mutate(
+    fuc_cat = str_extract_all(Observed.Modifications, "Fuc\\(\\d+\\)"),
+    sia_cat = str_extract_all(Observed.Modifications, "NeuGc\\(\\d+\\)|NeuAc\\(\\d+\\)")
+  ) %>%
+  mutate(
+    fuc_cat = sapply(
+      str_extract_all(fuc_cat, "[[:digit:]]+"),
+      function(x) ifelse(identical(x, character(0)), NA, sum(as.numeric(x)))
+    ),
+    sia_cat = sapply(
+      str_extract_all(sia_cat, "[[:digit:]]+"),
+      function(x) ifelse(identical(x, character(0)), NA, sum(as.numeric(x)))
+    )
+  ) %>%
+  # add back glycan type annotation
+  left_join(res_Mm_brainregions$psm_normalised %>% distinct(Observed.Modifications, glycan_type))
+```
+
+We then can vidualise this in different ways, revealing that the most abundant glycan compositions in the olfactory bulb are quite different from the rest of the brain which is in line with the previous observations.
+
+```{r}
+top10 %>% 
+  ggplot(aes(x = mass, colour =condition)) +
+  geom_density() +
+  labs(subtitle = "top1 frac int per tissue")
+
+top10 %>% 
+  ggplot(aes(y = mass, x = condition, colour =condition)) +
+  ggforce::geom_sina(stroke = NA, alpha = 0.2) +
+  geom_boxplot(colour = "black", fill =NA) +
+  labs(subtitle = "top1 frac int per tissue") +
+  tilted
+
+top10 %>% 
+  ggplot(aes(x = condition, fill =glycan_type)) +
+  geom_bar()  +
+  scale_fill_manual(values = pal)+
+  labs(subtitle = "Top10 compositions per brain region\n (fractional intensity)") +
+  tilted
+
+top10 %>% 
+  filter(fuc_cat > 0) %>% 
+  ggplot(aes(x = condition, fill = as.factor(fuc_cat))) +
+  geom_bar(pos = "fill") +
+  scale_fill_brewer(palette = "Reds", name = "# fucoses")+
+  labs(subtitle = "top10 fractional intensity per tissue") +
+  tilted
+
+top10 %>% 
+  filter(sia_cat > 0) %>% 
+  ggplot(aes(x = condition, fill = as.factor(sia_cat))) +
+  geom_bar(pos = "fill") +
+  scale_fill_brewer(palette = "Reds", name = "3 sial")+
+  labs(subtitle = "top1 frac int per tissue") +
+  tilted
+
+```
+
+## c) Enrichment analysis
+
+Finally, we provide code for performing gene set enrichment analysis using the Molecular Signatures Database (MSigDB), which includes a broad range of curated gene set collections. For this dataset, all Gene Ontology (GO) terms for Mus musculus were extracted. Enrichment analysis was then carried out using these gene sets in combination with the normalized weighted mean method from the decoupleR package, enabling the identification of GO terms enriched or depleted in specific brain regions relative to others.
+
+**CRITICAL As these pathway enrichment analyses are performed at the gene level, the glycopeptide level DEA results have to be summarised somehow. There is no best practice to do this. Here, we choose the maximum fold-change observed per gene.**
+
+```{r}
+# download msigdb info 
+PKN <- msigdbr::msigdbr(species = "Mus musculus", category = "C5") %>%
+  # bring into correct format
+  transmute(source = gs_name, mor = 1, target = gene_symbol) %>%
+  # remove duplicates
+  distinct() %>% 
+  # remove pathway collection we are not interested in
+  filter(!grepl("HP", source))
+
+ decoupler_results <- res_Mm_brainregions$limma_results %>%
+   group_by(contrast, Gene) %>%
+   mutate(max_t = max(abs(t))) %>%
+   group_by(contrast, Gene) %>%
+   filter(abs(t) == max_t) %>% 
+  distinct(Gene, contrast, t) %>% 
+  nest(data = c(Gene, t, contrast))%>%
+  mutate(ER = map(data, function(df) {
+    x = df %>%  acast(Gene ~ contrast, value.var = "t", fill = 0)
+    decoupleR::run_wmean(mat = x, network = PKN, minsize = 10)
+  }
+)) %>%
+  select(-data) %>%
+  unnest(cols = c(ER)) %>% 
+  filter(statistic == "norm_wmean")
+ 
+ 
+int <- decoupler_results %>% 
+  filter(p_value < 0.05) %>% 
+  mutate(abs_score = abs(score)) %>% 
+  group_by(condition) %>% 
+  slice_max(order_by = abs_score, n = 2)
+
+# int <- c(
+#   "Protein tyrosine kinase",
+#   "Cellular macromolecule metabolic process",
+#   "Integral component of membrane", 
+#   "DNA binding",
+#   "Generation of precursor metabolites and energy",
+#   "GTP binding", "FHA domain"
+#   
+# )
+
+decoupler_results %>% 
+  filter(source %in% int$source) %>%
+  group_by(source) %>% 
+  mutate(max_score = sum(abs(score))) %>% 
+  ungroup() %>% 
+  ggplot(aes(x = score, y = reorder(source, max_score), colour = condition)) +
+  geom_vline(xintercept = 0) +
+  geom_vline(xintercept = c(-1.7, 1.7), linetype = 3) +
+  geom_segment(xend = 0, colour = "black") +
+  geom_point(aes(size = abs(score))) +
+  #scale_color_manual(values = c("dodgerblue4", "indianred")) +
+  scale_size(range = c(2, 4), guide = "none") +
+  labs(x = "pathway enrichment score", y = "") +
+  cowplot::theme_cowplot(font_size = 12) +
+  theme(axis.text.y = element_text(size = 8)) +
+  labs(subtitle = "Enrichment relative to other brain regions")
+```

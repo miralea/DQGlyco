@@ -4,6 +4,17 @@
 
 ![Repository summarising all analysis related to the DQGlyco paper.](DQGlyco_logopng.png)
 
+## Publication and Data
+
+This repostory summarises work for the publication:\
+**Uncovering protein glycosylation dynamics and heterogeneity using deep quantitative glycoprofiling (DQGlyco)**\
+
+Read the paper: https://www.nature.com/articles/s41594-025-01485-w \
+Interactive visualisation & result download: https://apps.embl.de/glycoapp/
+
+## Contact
+
+For further questions, please open an issue or contact: mira.burtscher(a)embl.de
 
 ## Background
 
@@ -13,7 +24,7 @@ Protein glycosylation, a diverse post-translational modification, regulates key 
 
 ## Repository structure
 
-The analysis scripts can be found in analysis, which further is divided in structural analysis and data analysis. 
+The analysis scripts can be found in **analysis**, which further is divided in structural analysis and data analysis. We also added an exemplary computational workflow to analyse quantitative glycoproteomics data generated with DQGlyco in example_analysis.
 
 
 ### 1. Data analysis
@@ -29,13 +40,17 @@ All further analyses start from the processed files and are done per dataset (eg
 ---
 
 
-### Figures and Tables
+#### Figures and Tables
 
-In [*analysis/data_analysis/figures_tables_supplements*](analysis/data_analysis/figures_tables_supplements) code used to generate all figures, tables and supplementary data is deposited. Code either starts from the processed results or results of the analyses described in [*analysis/data_analysis*](analysis/data_analysis). Please reach out in case of questions (mira.burtscher(at)embl.de). Please note that figure colour, legends, axis title etc were modified in Inkscape to be included in the final manuscripts, so slight differences arise from that.
+In [*analysis/data_analysis/figures_tables_supplements*](analysis/data_analysis/figures_tables_supplements) code used to generate all data analysis figures, tables and supplementary data is deposited. Code either starts from the processed results or results of the analyses described in [*analysis/data_analysis*](analysis/data_analysis). Please reach out in case of questions (mira.burtscher(at)embl.de). Please note that figure colour, legends, axis title etc were modified in Inkscape to be included in the final manuscripts, so slight differences arise from that.
 
 ### 2. Structural analysis
 
 The structural analysis code can be found in [*analysis/structural_analysis*](analysis/structural_analysis) and has a separate README with additional explanation.
+
+### 3. Example analysis
+
+The example analysis in [*analysis/example_analysis*](analysis/example_analysis) comes as a quarto file which can be downloaded and executed or as an interactie html to explore. We provide the data to try this workflow script in the contained data folder.
 
 
 
