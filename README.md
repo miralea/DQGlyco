@@ -6,7 +6,7 @@
 
 ## Related publication
 
-This repostory summarises work for the publication:\
+This repository summarises work for the publication:\
 **Uncovering protein glycosylation dynamics and heterogeneity using deep quantitative glycoprofiling (DQGlyco)**
 
 Read the paper: https://www.nature.com/articles/s41594-025-01485-w \
